@@ -2,7 +2,7 @@
 Auto-apply — sends applications for strong South-India matches, by email only.
 
 Runs after each alert run on GitHub Actions. For every new match that is in
-Bangalore / Karnataka / remote, scored 7+/10 by Gemini and not a junior post:
+South India (Bangalore first) or remote, scored 6+/10 by Gemini and not a junior post:
 
   * If the posting or notice names an application email address, Gemini writes
     a tailored cover email from cv_profile.txt and it is sent from the applicant's
@@ -71,7 +71,7 @@ DATA_DIR = HERE
 STANDARD_ANSWERS = []
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 
-MIN_AI_SCORE      = 7
+MIN_AI_SCORE      = 6
 MAX_SENT_PER_DAY  = 5
 MAX_KITS_PER_RUN  = 6
 DESC_CHARS        = 6000
@@ -311,13 +311,13 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
 
     todo = [j for j in jobs if eligible(j, is_bangalore) and _key(j) not in done_keys]
     # Why the rest were skipped — shown in the run log
-    why = {"not South India/remote": 0, "fit below 7": 0, "junior title": 0, "already applied": 0}
+    why = {"not South India/remote": 0, "fit below 6": 0, "junior title": 0, "already applied": 0}
     for j in jobs:
         loc = (j.get("location") or "").lower()
         if not (is_bangalore(j) or "remote" in loc):
             why["not South India/remote"] += 1
         elif (j.get("ai_score") if j.get("ai_score") is not None else (8 if j.get("relevance") == "HIGH" else 0)) < MIN_AI_SCORE:
-            why["fit below 7"] += 1
+            why["fit below 6"] += 1
         elif JUNIOR_TITLE.search(j.get("title", "")) or NEVER_APPLY_ORGS.search(j.get("org", "")):
             why["junior title"] += 1
         elif _key(j) in done_keys:
