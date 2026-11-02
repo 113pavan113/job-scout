@@ -310,6 +310,19 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     can_send  = bool(GMAIL_APP_PASSWORD and APPLICANT_EMAIL) and os.path.exists(CV_FILE)
 
     todo = [j for j in jobs if eligible(j, is_bangalore) and _key(j) not in done_keys]
+    # Why the rest were skipped — shown in the run log
+    why = {"not Bangalore/remote": 0, "fit below 7": 0, "junior title": 0, "already applied": 0}
+    for j in jobs:
+        loc = (j.get("location") or "").lower()
+        if not (is_bangalore(j) or "remote" in loc):
+            why["not Bangalore/remote"] += 1
+        elif (j.get("ai_score") if j.get("ai_score") is not None else (8 if j.get("relevance") == "HIGH" else 0)) < MIN_AI_SCORE:
+            why["fit below 7"] += 1
+        elif JUNIOR_TITLE.search(j.get("title", "")) or NEVER_APPLY_ORGS.search(j.get("org", "")):
+            why["junior title"] += 1
+        elif _key(j) in done_keys:
+            why["already applied"] += 1
+    print(f"[auto-apply] of {len(jobs)} matches, skipped: " + ", ".join(f"{k} {v}" for k, v in why.items() if v))
     print(f"\n[auto-apply] {len(todo)} eligible job(s); "
           f"{'email sending ON' if can_send else 'kits only (no GMAIL_APP_PASSWORD)'}.")
     kits = 0
