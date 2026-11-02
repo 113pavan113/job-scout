@@ -164,6 +164,8 @@ def _pdf_text(data):
 
 def fetch_full_text(job, fetch_page, fetch_bytes):
     """Full posting text (LinkedIn description, web page or PDF notice)."""
+    if len(job.get("description") or "") >= 300:     # carried in from an alert email
+        return job["description"][:DESC_CHARS]
     url = job["url"]
     try:
         m = re.search(r'linkedin\.com/jobs/view/.*?-(\d{6,})(?:\?|$)', url)

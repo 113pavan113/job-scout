@@ -17,6 +17,8 @@ Sources:
  13. freejobalert.com – Karnataka government jobs + all-India contract /
      walk-in ("without exam") posts, filtered to policy / agri / programme roles
  14. LinkedIn company follow-list – every current India opening at chosen employers
+ 15. Job-alert emails – Naukri and iimjobs recruiter mails and alerts, read
+     read-only from the applicant's Gmail (both sites block scripts)
 
 Scores jobs against the candidate's CV and sends Telegram alerts for NEW matches.
 Alert includes: location, matched keywords, posted date, and direct job link.
@@ -1980,6 +1982,8 @@ def _strip_html(raw):
 
 def fetch_description(job):
     """Best-effort job description text; '' when unavailable."""
+    if job.get("description"):          # e.g. Naukri recruiter mails carry the full JD
+        return job["description"][:AI_DESC_CHARS]
     url = job["url"]
     try:
         if "linkedin.com/jobs/view" in url:
@@ -2462,6 +2466,8 @@ def main():
         (ATREE_NAME,         scrape_atree),
         (SELCO_NAME,         scrape_selco),
         (GOV_NAME,           scrape_government),
+        ("Email alerts",     lambda: __import__("email_alerts").fetch_email_jobs(
+                                 _applicant().get("email", ""), os.environ.get("GMAIL_APP_PASSWORD", ""))),
         (FJA_NAME,           scrape_freejobalert),
         (LINKEDIN_NAME + " follow-list", scrape_linkedin_companies),
         (UNDP_NAME,          scrape_undp),
