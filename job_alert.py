@@ -1062,9 +1062,9 @@ def scrape_jobshobnest():
             if not any(x in loc_lower for x in JOBSHOBNEST_LOCS):
                 continue
 
-            # Salary filter — skip jobs clearly below 8 LPA
+            # Salary filter — skip jobs clearly below 12 LPA (the goal is a higher CTC)
             lpa = _parse_salary_lpa(salary)
-            if lpa is not None and lpa < 8:
+            if lpa is not None and lpa < 12:
                 continue
 
             # Attach salary to location string so it shows in the alert
