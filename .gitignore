@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+job_alert_*.csv
+job_alert_*.html

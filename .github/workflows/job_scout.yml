@@ -1,0 +1,56 @@
+name: Job Scout
+
+on:
+  schedule:
+    - cron: "7 1 * * *"     # 06:37 IST
+    - cron: "23 8 * * *"    # 13:53 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout private data
+        uses: actions/checkout@v4
+        with:
+          repository: 113pavan113/un-jobs-alert
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PDF reader
+        run: pip install -q pypdf
+
+      # All output goes to the private repo — this public log stays empty.
+      - name: Run
+        env:
+          JOB_DATA_DIR:       data
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          mkdir -p data/logs
+          python job_alert.py > data/logs/last_run.log 2>&1 || echo "Run ended with an error."
+
+      - name: Save results to the private repo
+        working-directory: data
+        run: |
+          git config user.name  "job-scout-bot"
+          git config user.email "job-scout-bot@users.noreply.github.com"
+          for f in seen_jobs.json applied_jobs.json APPLICATIONS.md logs/last_run.log; do
+            [ -e "$f" ] && git add "$f"
+          done
+          git diff --cached --quiet || git commit -q -m "chore: update seen jobs [skip ci]"
+          git pull -q --rebase && git push -q
