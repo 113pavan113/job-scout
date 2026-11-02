@@ -541,7 +541,10 @@ DEVNET_CITIES = ["delhi", "new delhi", "bangalore", "bengaluru", "gurugram", "gu
 BANGALORE_MARKERS = {"bangalore", "bengaluru", "karnataka"}
 SOUTH_MARKERS     = {"hyderabad", "telangana", "chennai", "tamil nadu", "kochi", "kerala",
                      "thiruvananthapuram", "trivandrum", "coimbatore", "mysuru", "mysore",
-                     "visakhapatnam", "andhra"}
+                     "visakhapatnam", "andhra", "mangaluru", "mangalore", "madurai",
+                     "puducherry", "pondicherry", "tirupati", "vijayawada", "warangal",
+                     "kozhikode", "calicut", "thrissur", "ernakulam", "tiruchirappalli",
+                     "trichy", "salem", "vellore", "hosur"}
 DELHI_MARKERS     = {"delhi", "new delhi", "ncr", "noida", "gurugram", "gurgaon"}
 
 
@@ -2611,7 +2614,7 @@ def main():
     auto_apply.configure(DATA_DIR)
     auto_apply.run(new_matches, ai_call=_ai_call, fetch_page=fetch_page,
                    fetch_bytes=fetch_bytes, notify=send_telegram,
-                   is_bangalore=lambda j: location_priority(j) == 0)
+                   is_bangalore=lambda j: location_priority(j) <= 1)   # Bangalore or rest of South India
 
     # Save outputs
     out_dir   = os.path.dirname(os.path.abspath(__file__))
