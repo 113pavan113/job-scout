@@ -2109,7 +2109,7 @@ def save_seen_jobs(seen_urls):
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram credentials not set — skipping.")
-        return
+        return False
     url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = urllib.parse.urlencode({
         "chat_id":    TELEGRAM_CHAT_ID,
@@ -2124,10 +2124,12 @@ def send_telegram(message):
             result = json.loads(resp.read().decode())
             if result.get("ok"):
                 print("Telegram alert sent.")
+                return True
             else:
                 print(f"Telegram error: {result}")
     except Exception as e:
         print(f"Telegram send failed: {e}")
+    return False
 
 
 def _short_source(src):
@@ -2546,7 +2548,8 @@ def main():
     # free and surface the moment a filter is loosened — the Delhi pay gate,
     # removed in Nov 2026, had silently and permanently buried IPE Global and
     # PxD roles.
-    save_seen_jobs(seen_urls | {j["url"] for j in candidates})
+    # The seen-list is saved after the alerts are sent (below), so a Telegram
+    # outage cannot silently swallow a run's matches.
 
     # Print summary
     high   = [j for j in all_jobs if j["relevance"] == "HIGH"]
@@ -2567,10 +2570,11 @@ def main():
             print(f"         {j['url']}\n")
 
     # Bangalore spotlight first, then full India alert — sent to both Telegram & Discord
+    delivered = True
     blr_msg = build_bangalore_spotlight(new_matches, all_jobs)
     if blr_msg:
         print("\nSending Bangalore spotlight...")
-        send_telegram(blr_msg)
+        delivered = send_telegram(blr_msg) and delivered
 
     if new_matches:
         high_new   = [j for j in new_matches if j["relevance"] == "HIGH"]
@@ -2580,7 +2584,7 @@ def main():
         messages = build_alert_messages(new_matches, len(all_jobs))
         print(f"\nSending alert for {len(new_matches)} new jobs ({len(messages)} message(s))...")
         for msg in messages:
-            send_telegram(msg)
+            delivered = send_telegram(msg) and delivered
     else:
         print("\nNo new matching jobs. Sending daily summary...")
         send_summary_message(all_jobs)
@@ -2595,6 +2599,12 @@ def main():
             + f"\n\nStill scraped {len(all_jobs)} jobs from the rest."
         )
         send_telegram(warn)
+
+    if delivered:
+        save_seen_jobs(seen_urls | {j["url"] for j in candidates})
+    else:
+        save_seen_jobs(seen_urls)
+        print("Telegram delivery failed — this run's matches stay unseen and will be retried.")
 
     # Apply by email to strong Bangalore matches; Telegram kits for the rest
     import auto_apply

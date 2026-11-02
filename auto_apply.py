@@ -350,9 +350,11 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
             ]))
             print(f"  [auto-apply] SENT: {job['title']} → {email}")
         elif kits < MAX_KITS_PER_RUN:
+            if notify(_kit_message(job, app)) is False:
+                print(f"  [auto-apply] kit not delivered, will retry: {job['title']}")
+                continue
             kits += 1
             applied.append({**entry, "method": "kit"})
-            notify(_kit_message(job, app))
             print(f"  [auto-apply] kit: {job['title']}")
 
     _save_applied(applied)
