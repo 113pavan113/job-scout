@@ -65,13 +65,13 @@ def configure(data_dir):
     WRITER_SYSTEM      = _load_private_text("writer_prompt.txt", WRITER_SYSTEM_DEFAULT)
     global STANDARD_ANSWERS, CV_VARIANTS
     STANDARD_ANSWERS   = a.get("standard_answers", [])
-    CV_VARIANTS        = [(re.compile(v["title_regex"], re.IGNORECASE), os.path.join(data_dir, v["file"]))
+    CV_VARIANTS        = [(re.compile(v["title_regex"], re.IGNORECASE), os.path.join(data_dir, v["file"]), v.get("focus"))
                           for v in a.get("cv_variants", []) if os.path.exists(os.path.join(data_dir, v["file"]))]
 
 
 DATA_DIR = HERE
 STANDARD_ANSWERS = []
-CV_VARIANTS = []          # (title regex, CV path): first match wins, else CV_FILE
+CV_VARIANTS = []          # (title regex, CV path, focus): Gemini's focus for the JD wins, then title, else CV_FILE
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 
 MIN_AI_SCORE      = 4        # same bar as the alerts: apply to every India / remote alert
@@ -255,9 +255,11 @@ def write_application(job, text, ai_call, profile):
 
 # ─── SENDING ───────────────────────────────────────────────────────────────────
 
-def pick_cv(job):
-    """The CV version whose focus matches the job title."""
-    return next((path for rx, path in CV_VARIANTS if rx.search(job.get("title", ""))), CV_FILE)
+def pick_cv(job, app=None):
+    """The CV version that fits the posting: Gemini's read of the JD, else the job title."""
+    focus = (app or {}).get("cv_focus")
+    return (next((path for _, path, f in CV_VARIANTS if focus and f == focus), None)
+            or next((path for rx, path, _ in CV_VARIANTS if rx.search(job.get("title", ""))), CV_FILE))
 
 
 def send_email(to_addr, subject, body, cv_path):
@@ -358,11 +360,11 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
         entry = {"key": _key(job), "title": job["title"], "org": job["org"],
                  "url": job["url"], "date": today, "ai_score": job.get("ai_score"),
                  "subject": app.get("subject", ""), "body": app.get("body", ""),
-                 "cv": os.path.relpath(pick_cv(job), DATA_DIR)}
+                 "cv": os.path.relpath(pick_cv(job, app), DATA_DIR)}
 
         if by_email and can_send and sent_today < MAX_SENT_PER_DAY:
             try:
-                send_email(email, app["subject"], app["body"], pick_cv(job))
+                send_email(email, app["subject"], app["body"], pick_cv(job, app))
             except Exception as e:
                 print(f"  [auto-apply] send to {email} failed: {e}")
                 continue
