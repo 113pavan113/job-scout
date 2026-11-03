@@ -74,6 +74,7 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 MIN_AI_SCORE      = 5        # stretch roles welcome: volume over tight fit
 MAX_SENT_PER_DAY  = 10
 MAX_KITS_PER_RUN  = 10
+KITS_TO_TELEGRAM  = False    # kits go only to the log, where the Cowork browser agent applies from it
 DESC_CHARS        = 6000
 
 # Too junior for a mid-to-senior professional
@@ -365,7 +366,7 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
             ]))
             print(f"  [auto-apply] SENT: {job['title']} → {email}")
         elif kits < MAX_KITS_PER_RUN:
-            if notify(_kit_message(job, app)) is False:
+            if KITS_TO_TELEGRAM and notify(_kit_message(job, app)) is False:
                 print(f"  [auto-apply] kit not delivered, will retry: {job['title']}")
                 continue
             kits += 1
@@ -378,4 +379,4 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     if new:
         emailed = sum(1 for e in applied if e.get("method") == "email")
         notify(f"📒 <b>Applications log</b>: {new} new this run · {emailed} emailed in total · "
-               f"{len(applied) - emailed} kits in total\n<a href=\"{LOG_URL}\">Open the full log →</a>")
+               f"{len(applied) - emailed} queued for the browser agent in total\n<a href=\"{LOG_URL}\">Open the full log →</a>")
