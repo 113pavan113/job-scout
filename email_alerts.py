@@ -33,6 +33,8 @@ _JOB_LINK = re.compile(
     re.IGNORECASE | re.DOTALL)
 _APPLY_LINK = re.compile(
     r'href="?(https?://my\.naukri\.com/[^"\s>]*applyBroadcastMail[^"\s>]*)', re.IGNORECASE)
+# iimjobs wraps every link in a cm.iimjobs.com tracking redirect carrying the job id
+_IIM_JOBID = re.compile(r'jobId(?:%3D|=)(\d+)', re.IGNORECASE)
 _SALARY = re.compile(r'₹\s*([\d.]+)\s*-\s*([\d.]+)\s*LPA', re.IGNORECASE)
 
 
@@ -107,6 +109,43 @@ def parse_alert_mail(raw_html, source):
     return jobs
 
 
+def parse_iimjobs_mail(subject, raw_html):
+    """iimjobs recommendation mails: one job card per job id (single-job mails also carry the JD)."""
+    raw = raw_html or ""
+    jobs, seen = [], set()
+    for m in _IIM_JOBID.finditer(raw):
+        jid = m.group(1)
+        if jid in seen:
+            continue
+        seen.add(jid)
+        # Card text after the first link to this job: title, organisation, location, experience
+        start = raw.find(">", m.end()) + 1          # end of the opening <a ...> tag
+        card = _text(raw[start:start + 3000])
+        parts = [p.strip() for p in card.split("|") if p.strip() and p.strip().lower() != "apply now"]
+        title = parts[0] if parts else ""
+        org = parts[1] if len(parts) > 1 else ""
+        loc = re.search(r'Location:\s*\|?\s*([^|]+)', card)
+        exp = re.search(r'Experience:\s*\|?\s*([^|]+)', card)
+        if len(title) < 4 or len(title) > 160:
+            continue
+        jd = ""
+        if len(seen) == 1 and "<!-- Job Description -->" in raw:
+            block = raw.split("<!-- Job Description -->", 1)[1].split("<!--", 1)[0]
+            jd = _text(block).replace("| ", "\n")
+        note, top = _salary_note(card)
+        jobs.append({
+            "title":       title,
+            "org":         org[:120] or "iimjobs",
+            "location":    (loc.group(1).strip() if loc else "India") + (f" · {note}" if note else ""),
+            "url":         f"https://www.iimjobs.com/one-click-apply?jobId={jid}",
+            "updated":     "",
+            "source":      "iimjobs",
+            "description": (f"Experience: {exp.group(1).strip()}.\n" if exp else "") + jd[:5500],
+            "max_lpa":     top,
+        })
+    return jobs
+
+
 def fetch_email_jobs(address, app_password, min_lpa=12):
     """Jobs from recent Naukri / iimjobs emails. Never raises."""
     if not address or not app_password:
@@ -133,7 +172,9 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
             raw = _html_part(msg)
             source = "iimjobs" if "iimjobs" in sender else "Naukri"
             found = []
-            if "Job |" in subject or "applyBroadcastMail" in raw:
+            if source == "iimjobs":
+                found = parse_iimjobs_mail(subject, raw)
+            elif "Job |" in subject or "applyBroadcastMail" in raw:
                 job = parse_recruiter_mail(subject, raw)
                 found = [job] if job else []
             if not found:
