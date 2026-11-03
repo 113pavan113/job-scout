@@ -63,12 +63,15 @@ def configure(data_dir):
     CV_FILE            = os.path.join(data_dir, a.get("cv_file", "cv/CV.pdf"))
     NEVER_APPLY_ORGS   = re.compile(a.get("never_apply_orgs_regex", r"(?!x)x"), re.IGNORECASE)
     WRITER_SYSTEM      = _load_private_text("writer_prompt.txt", WRITER_SYSTEM_DEFAULT)
-    global STANDARD_ANSWERS
+    global STANDARD_ANSWERS, CV_VARIANTS
     STANDARD_ANSWERS   = a.get("standard_answers", [])
+    CV_VARIANTS        = [(re.compile(v["title_regex"], re.IGNORECASE), os.path.join(data_dir, v["file"]))
+                          for v in a.get("cv_variants", []) if os.path.exists(os.path.join(data_dir, v["file"]))]
 
 
 DATA_DIR = HERE
 STANDARD_ANSWERS = []
+CV_VARIANTS = []          # (title regex, CV path): first match wins, else CV_FILE
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 
 MIN_AI_SCORE      = 5        # stretch roles welcome: volume over tight fit
@@ -138,7 +141,8 @@ def write_log(entries):
         if not e.get("body"):
             continue
         lines += [f"<details><summary>{e.get('date','')} — {cell(e.get('title'))}, {cell(e.get('org'))}</summary>",
-                  "", f"**Subject:** {e.get('subject','')}", "", "```", e["body"], "```", "", "</details>", ""]
+                  "", f"**Subject:** {e.get('subject','')}", "",
+                  f"**CV to attach:** {e.get('cv') or os.path.relpath(CV_FILE, DATA_DIR)}", "", "```", e["body"], "```", "", "</details>", ""]
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -250,7 +254,12 @@ def write_application(job, text, ai_call, profile):
 
 # ─── SENDING ───────────────────────────────────────────────────────────────────
 
-def send_email(to_addr, subject, body):
+def pick_cv(job):
+    """The CV version whose focus matches the job title."""
+    return next((path for rx, path in CV_VARIANTS if rx.search(job.get("title", ""))), CV_FILE)
+
+
+def send_email(to_addr, subject, body, cv_path):
     msg = EmailMessage()
     msg["From"]     = f"{APPLICANT_NAME} <{APPLICANT_EMAIL}>"
     msg["To"]       = to_addr
@@ -258,9 +267,9 @@ def send_email(to_addr, subject, body):
     msg["Reply-To"] = APPLICANT_EMAIL
     msg["Subject"]  = subject
     msg.set_content(body)
-    with open(CV_FILE, "rb") as f:
+    with open(cv_path, "rb") as f:
         msg.add_attachment(f.read(), maintype="application", subtype="pdf",
-                           filename=os.path.basename(CV_FILE))
+                           filename=os.path.basename(cv_path))
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
         s.login(APPLICANT_EMAIL, GMAIL_APP_PASSWORD)
         s.send_message(msg)
@@ -347,11 +356,12 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
                     and email.lower() in (text or "").lower())
         entry = {"key": _key(job), "title": job["title"], "org": job["org"],
                  "url": job["url"], "date": today, "ai_score": job.get("ai_score"),
-                 "subject": app.get("subject", ""), "body": app.get("body", "")}
+                 "subject": app.get("subject", ""), "body": app.get("body", ""),
+                 "cv": os.path.relpath(pick_cv(job), DATA_DIR)}
 
         if by_email and can_send and sent_today < MAX_SENT_PER_DAY:
             try:
-                send_email(email, app["subject"], app["body"])
+                send_email(email, app["subject"], app["body"], pick_cv(job))
             except Exception as e:
                 print(f"  [auto-apply] send to {email} failed: {e}")
                 continue
