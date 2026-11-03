@@ -74,7 +74,7 @@ STANDARD_ANSWERS = []
 CV_VARIANTS = []          # (title regex, CV path): first match wins, else CV_FILE
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 
-MIN_AI_SCORE      = 5        # stretch roles welcome: volume over tight fit
+MIN_AI_SCORE      = 4        # same bar as the alerts: apply to every South India / remote alert
 MAX_SENT_PER_DAY  = 10
 MAX_KITS_PER_RUN  = 10
 KITS_TO_TELEGRAM  = False    # kits go only to the log, where the Cowork browser agent applies from it
@@ -324,13 +324,13 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
 
     todo = [j for j in jobs if eligible(j, is_bangalore) and _key(j) not in done_keys]
     # Why the rest were skipped — shown in the run log
-    why = {"not South India/remote": 0, "fit below 5": 0, "junior title": 0, "already applied": 0}
+    why = {"not South India/remote": 0, f"fit below {MIN_AI_SCORE}": 0, "junior title": 0, "already applied": 0}
     for j in jobs:
         loc = (j.get("location") or "").lower()
         if not (is_bangalore(j) or "remote" in loc):
             why["not South India/remote"] += 1
         elif (j.get("ai_score") if j.get("ai_score") is not None else (8 if j.get("relevance") == "HIGH" else 0)) < MIN_AI_SCORE:
-            why["fit below 5"] += 1
+            why[f"fit below {MIN_AI_SCORE}"] += 1
         elif JUNIOR_TITLE.search(j.get("title", "")) or NEVER_APPLY_ORGS.search(j.get("org", "")):
             why["junior title"] += 1
         elif _key(j) in done_keys:
