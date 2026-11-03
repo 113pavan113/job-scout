@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# One run at a time: overlapping runs both write the private data repo and the second push conflicts
+concurrency:
+  group: job-scout
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
