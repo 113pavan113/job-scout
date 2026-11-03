@@ -235,7 +235,8 @@ def eligible(job, is_bangalore):
 
 WRITER_SYSTEM_DEFAULT = ("""You prepare a truthful job application for one candidate.
 CANDIDATE (the ONLY facts you may use): {profile}
-Fixed details: name {name}; phone {phone}; email {email}; LinkedIn {linkedin}; notice period {notice}; expected CTC {ctc}.
+Fixed details: name {name}; phone {phone}; email {email}; LinkedIn {linkedin}; notice period {notice}.
+Never mention CTC or salary in the cover email.
 Reply with ONLY a JSON object with keys method ("email"|"portal"|"unclear"), requires_format (bool), subject, body (170-230 word cover email), why_fit (one line).""")
 WRITER_SYSTEM = WRITER_SYSTEM_DEFAULT
 
