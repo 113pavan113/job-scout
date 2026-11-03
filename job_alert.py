@@ -1896,6 +1896,17 @@ def classify(kw_score, has_core=False, title_core=False):
     return "NO MATCH"
 
 
+OTHER_INDIA_MARKERS = {"india", "mumbai", "pune", "kolkata", "ahmedabad", "jaipur", "lucknow", "bhopal",
+                       "bhubaneswar", "chandigarh", "guwahati", "patna", "ranchi", "raipur", "dehradun",
+                       "nagpur", "indore", "goa", "anand", "pan india"}
+
+
+def in_india(job):
+    """True for a job anywhere in India (or with no foreign location)."""
+    loc = (job.get("location", "") or "").lower()
+    return location_priority(job) <= 2 or any(m in loc for m in OTHER_INDIA_MARKERS)
+
+
 def location_priority(job):
     """0 = Bangalore, 1 = rest of South India, 2 = Delhi NCR, 3 = other."""
     loc = (job.get("location", "") + " " + job["source"]).lower()
@@ -2620,7 +2631,7 @@ def main():
     auto_apply.configure(DATA_DIR)
     auto_apply.run(new_matches, ai_call=_ai_call, fetch_page=fetch_page,
                    fetch_bytes=fetch_bytes, notify=send_telegram,
-                   is_bangalore=lambda j: location_priority(j) <= 1)   # Bangalore or rest of South India
+                   is_bangalore=in_india)   # any Indian city — location is not a factor
 
     # Save outputs
     out_dir   = os.path.dirname(os.path.abspath(__file__))
