@@ -1,5 +1,5 @@
 """
-Job-alert emails — jobs from Naukri and iimjobs, read from the applicant's Gmail.
+Job-alert emails — jobs from Naukri, iimjobs and LinkedIn, read from the applicant's Gmail.
 
 Naukri and iimjobs block scripts on their sites, but both email jobs to their
 users: recruiter "Job | <title> in <company>" mails, saved-search alerts and
@@ -14,12 +14,16 @@ import email
 import html
 import imaplib
 import re
+import time
+import urllib.request
 from email.header import decode_header, make_header
 
 LOOKBACK_DAYS = 4
 MAX_MESSAGES  = 150
 
-SENDER_QUERY = "from:(naukri.com OR iimjobs.com) -from:minis.naukri.com"
+SENDER_QUERY = ("from:(naukri.com OR iimjobs.com OR jobalerts-noreply@linkedin.com OR "
+                "jobs-noreply@linkedin.com OR jobs-listings@linkedin.com) -from:minis.naukri.com")
+MAX_LINKEDIN_JOBS = 40       # LinkedIn job pages fetched per run (one guest request each)
 # Account / marketing mails from these senders that carry no job
 NOT_JOB_SUBJECT = re.compile(
     r'noticing your profile|you applied|profile (view|update)|verify|password|'
@@ -35,6 +39,10 @@ _APPLY_LINK = re.compile(
     r'href="?(https?://my\.naukri\.com/[^"\s>]*applyBroadcastMail[^"\s>]*)', re.IGNORECASE)
 # iimjobs wraps every link in a cm.iimjobs.com tracking redirect carrying the job id
 _IIM_JOBID = re.compile(r'jobId(?:%3D|=)(\d+)', re.IGNORECASE)
+# LinkedIn alert mails link every job as linkedin.com/comm/jobs/view/<id>
+_LI_JOBID = re.compile(r'linkedin\.com/(?:comm/)?jobs/view/(\d{6,})', re.IGNORECASE)
+_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 _SALARY = re.compile(r'₹\s*([\d.]+)\s*-\s*([\d.]+)\s*LPA', re.IGNORECASE)
 
 
@@ -146,13 +154,53 @@ def parse_iimjobs_mail(subject, raw_html):
     return jobs
 
 
+def _li_field(page, cls):
+    m = re.search(r'class="[^"]*\b' + cls + r'\b[^"]*"[^>]*>(.*?)</(?:h1|h2|h3|a|span|div)>', page, re.DOTALL)
+    return _text(m.group(1)).strip("| ") if m else ""
+
+
+def parse_linkedin_mail(raw_html, budget):
+    """LinkedIn job-alert mails: job ids from the links, details from LinkedIn's public job page."""
+    jobs, seen = [], set()
+    for m in _LI_JOBID.finditer(raw_html or ""):
+        jid = m.group(1)
+        if jid in seen or len(jobs) >= budget:
+            continue
+        seen.add(jid)
+        try:
+            req = urllib.request.Request(
+                f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid}", headers=_UA)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                page = r.read().decode("utf-8", "replace")
+        except Exception:
+            continue                                  # removed or rate-limited; skip this one
+        time.sleep(1.0)
+        title = _li_field(page, "top-card-layout__title") or _li_field(page, "topcard__title")
+        if not title:
+            continue
+        desc = re.search(r'show-more-less-html__markup[^>]*>(.*?)</div>', page, re.DOTALL)
+        jd = _text(desc.group(1)).replace("| ", "\n") if desc else ""
+        note, top = _salary_note(page)
+        jobs.append({
+            "title":       title[:160],
+            "org":         (_li_field(page, "topcard__org-name-link") or "LinkedIn")[:120],
+            "location":    (_li_field(page, "topcard__flavor--bullet") or "India") + (f" · {note}" if note else ""),
+            "url":         f"https://www.linkedin.com/jobs/view/{jid}/",
+            "updated":     "",
+            "source":      "LinkedIn alert email",
+            "description": jd[:6000],
+            "max_lpa":     top,
+        })
+    return jobs
+
+
 def fetch_email_jobs(address, app_password, min_lpa=12):
-    """Jobs from recent Naukri / iimjobs emails. Never raises."""
+    """Jobs from recent Naukri / iimjobs / LinkedIn alert emails. Never raises."""
     if not address or not app_password:
         print("\n[Email alerts] skipped — no Gmail address or app password.")
         return []
-    print(f"\n[Email alerts] Reading Naukri / iimjobs mails from the last {LOOKBACK_DAYS} days...")
-    jobs, seen = [], set()
+    print(f"\n[Email alerts] Reading Naukri / iimjobs / LinkedIn mails from the last {LOOKBACK_DAYS} days...")
+    jobs, seen, li_count = [], set(), 0
     try:
         box = imaplib.IMAP4_SSL("imap.gmail.com", 993)
         box.login(address, app_password.replace(" ", ""))
@@ -170,9 +218,15 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
             if NOT_JOB_SUBJECT.search(subject):
                 continue
             raw = _html_part(msg)
-            source = "iimjobs" if "iimjobs" in sender else "Naukri"
+            source = ("iimjobs" if "iimjobs" in sender else
+                      "LinkedIn alert email" if "linkedin" in sender else "Naukri")
             found = []
-            if source == "iimjobs":
+            if source == "LinkedIn alert email":
+                found = parse_linkedin_mail(raw, MAX_LINKEDIN_JOBS - li_count)
+                li_count += len(found)
+                if not found:
+                    continue                      # never fall back to the Naukri link parser
+            elif source == "iimjobs":
                 found = parse_iimjobs_mail(subject, raw)
             elif "Job |" in subject or "applyBroadcastMail" in raw:
                 job = parse_recruiter_mail(subject, raw)
@@ -185,6 +239,7 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
                 if job.get("max_lpa") is not None and job["max_lpa"] < min_lpa:
                     continue                      # stated pay tops out below the goal
                 seen.add(job["url"])
+                job["from_email"] = True          # chosen by the job site for this profile
                 jobs.append(job)
         box.logout()
     except Exception as e:

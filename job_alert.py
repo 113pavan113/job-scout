@@ -1998,7 +1998,7 @@ def fetch_description(job):
     url = job["url"]
     try:
         if "linkedin.com/jobs/view" in url:
-            m = re.search(r'-(\d{6,})(?:\?|$)', url)
+            m = re.search(r'(\d{6,})/?(?:\?|$)', url)
             if not m:
                 return ""
             page = fetch_page(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}")
@@ -2517,6 +2517,10 @@ def main():
         job["relevance"] = classify(job["kw_score"], job["has_core"], job["title_core"])
         if title_is_non_fit(job["title"], job.get("org", "")):
             job["relevance"] = "NO MATCH"
+        elif job.get("from_email") and job["relevance"] == "NO MATCH":
+            # Naukri / iimjobs / LinkedIn already picked these for this profile:
+            # let Gemini read the JD rather than the keyword filter dropping them.
+            job["relevance"] = "LOW"
 
     # Sort: Bangalore first → relevance tier → score desc.
     # Location leads the key so the Bangalore roles head every list and message.
@@ -2562,6 +2566,7 @@ def main():
         return True
 
     candidates  = [j for j in new_jobs if alertable(j)]
+    candidates.sort(key=lambda j: not j.get("from_email"))   # email jobs always reach Gemini
     new_matches = ai_rerank(candidates)
     # Only jobs that reached the alert / Gemini stage are marked seen. Jobs the
     # keyword filters dropped stay unseen, so they are re-scored every run for
