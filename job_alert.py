@@ -1707,6 +1707,7 @@ NON_FIT_TITLE = re.compile(
     r'accounts|cfo|chief financial|chef|culinary|nurse|nursing|doctor|'
     r'physician|pharmac\w*|medical|hospital|teacher|tutor|driver|technician|'
     r'mechanic|electrician|intern|internship|trainee|apprentice|'
+    r'co-?founder|founder|founding|'
     r'receptionist|housekeeping|security guard|executive assistant|'
     r'graphic designer|video editor|hr|human resources|recruiter|'
     r'talent acquisition|payroll|legal counsel|lawyer|financial controller|'
