@@ -1,5 +1,5 @@
 """
-Job-alert emails — jobs from Naukri, iimjobs and LinkedIn, read from the applicant's Gmail.
+Job-alert emails — jobs from Naukri, iimjobs, LinkedIn, Foundit and Indeed, read from the applicant's Gmail.
 
 Naukri and iimjobs block scripts on their sites, but both email jobs to their
 users: recruiter "Job | <title> in <company>" mails, saved-search alerts and
@@ -15,6 +15,7 @@ import html
 import imaplib
 import re
 import time
+import urllib.parse
 import urllib.request
 from email.header import decode_header, make_header
 
@@ -22,7 +23,8 @@ LOOKBACK_DAYS = 4
 MAX_MESSAGES  = 150
 
 SENDER_QUERY = ("from:(naukri.com OR iimjobs.com OR jobalerts-noreply@linkedin.com OR "
-                "jobs-noreply@linkedin.com OR jobs-listings@linkedin.com) -from:minis.naukri.com")
+                "jobs-noreply@linkedin.com OR jobs-listings@linkedin.com OR "
+                "jobmessenger@monsterindia.com OR foundit.in OR indeed.com) -from:minis.naukri.com")
 MAX_LINKEDIN_JOBS = 40       # LinkedIn job pages fetched per run (one guest request each)
 # Account / marketing mails from these senders that carry no job
 NOT_JOB_SUBJECT = re.compile(
@@ -41,6 +43,14 @@ _APPLY_LINK = re.compile(
 _IIM_JOBID = re.compile(r'jobId(?:%3D|=)(\d+)', re.IGNORECASE)
 # LinkedIn alert mails link every job as linkedin.com/comm/jobs/view/<id>
 _LI_JOBID = re.compile(r'linkedin\.com/(?:comm/)?jobs/view/(\d{6,})', re.IGNORECASE)
+# Foundit links are auto-login URLs (they carry a session token) wrapping the real
+# job page in return_url; only the bare job id is kept, never the login link.
+_FOUNDIT_JOB = re.compile(r'foundit\.in(?:%2F|/)job(?:%2F|/)(\d{5,})', re.IGNORECASE)
+# Indeed alert links carry the job key as jk=<16 hex>
+_INDEED_JK = re.compile(r'[?&;]jk=([0-9a-f]{16})', re.IGNORECASE)
+_A_TAG = re.compile(r'<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_SKIP_ANCHOR = {"apply", "apply now", "quick apply", "view job", "view details", "view all jobs",
+                "view all jobs →", "see job", "easily apply"}
 _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 _SALARY = re.compile(r'₹\s*([\d.]+)\s*-\s*([\d.]+)\s*LPA', re.IGNORECASE)
@@ -194,12 +204,41 @@ def parse_linkedin_mail(raw_html, budget):
     return jobs
 
 
+def parse_card_mail(raw_html, source):
+    """Foundit / Indeed alert mails: one card per job id — title link, then company | city."""
+    raw = html.unescape(raw_html or "")
+    pattern, base = ((_FOUNDIT_JOB, "https://www.foundit.in/job/{}") if source == "Foundit"
+                     else (_INDEED_JK, "https://in.indeed.com/viewjob?jk={}"))
+    jobs, seen = [], set()
+    for a in _A_TAG.finditer(raw):
+        href = urllib.parse.unquote(a.group(1))
+        m = pattern.search(href)
+        title = _text(a.group(2)).strip("| ").strip()
+        if not m or m.group(1) in seen or len(title) < 4 or title.lower() in _SKIP_ANCHOR:
+            continue
+        seen.add(m.group(1))
+        after = [p.strip() for p in _text(raw[a.end():a.end() + 1500]).split("|")
+                 if p.strip() and p.strip().lower() not in _SKIP_ANCHOR and not p.strip().startswith("<")]
+        note, top = _salary_note(" | ".join(after[:6]))
+        jobs.append({
+            "title":       title[:160],
+            "org":         (after[0] if after else source)[:120],
+            "location":    (after[1] if len(after) > 1 else "India")[:80] + (f" · {note}" if note else ""),
+            "url":         base.format(m.group(1)),
+            "updated":     "",
+            "source":      source,
+            "description": " | ".join(after[:6])[:600],
+            "max_lpa":     top,
+        })
+    return jobs
+
+
 def fetch_email_jobs(address, app_password, min_lpa=12):
     """Jobs from recent Naukri / iimjobs / LinkedIn alert emails. Never raises."""
     if not address or not app_password:
         print("\n[Email alerts] skipped — no Gmail address or app password.")
         return []
-    print(f"\n[Email alerts] Reading Naukri / iimjobs / LinkedIn mails from the last {LOOKBACK_DAYS} days...")
+    print(f"\n[Email alerts] Reading Naukri / iimjobs / LinkedIn / Foundit / Indeed mails from the last {LOOKBACK_DAYS} days...")
     jobs, seen, li_count = [], set(), 0
     try:
         box = imaplib.IMAP4_SSL("imap.gmail.com", 993)
@@ -219,9 +258,15 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
                 continue
             raw = _html_part(msg)
             source = ("iimjobs" if "iimjobs" in sender else
-                      "LinkedIn alert email" if "linkedin" in sender else "Naukri")
+                      "LinkedIn alert email" if "linkedin" in sender else
+                      "Foundit" if ("foundit" in sender or "monsterindia" in sender) else
+                      "Indeed" if "indeed" in sender else "Naukri")
             found = []
-            if source == "LinkedIn alert email":
+            if source in ("Foundit", "Indeed"):
+                found = parse_card_mail(raw, source)
+                if not found:
+                    continue
+            elif source == "LinkedIn alert email":
                 found = parse_linkedin_mail(raw, MAX_LINKEDIN_JOBS - li_count)
                 li_count += len(found)
                 if not found:
