@@ -16,6 +16,7 @@ import imaplib
 import re
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from email.header import decode_header, make_header
 
@@ -50,7 +51,28 @@ _FOUNDIT_JOB = re.compile(r'foundit\.in(?:%2F|/)job(?:%2F|/)(\d{5,})', re.IGNORE
 _INDEED_JK = re.compile(r'[?&;]jk=([0-9a-f]{16})', re.IGNORECASE)
 _A_TAG = re.compile(r'<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
 _SKIP_ANCHOR = {"apply", "apply now", "quick apply", "view job", "view details", "view all jobs",
-                "view all jobs →", "see job", "easily apply"}
+                "view all jobs →", "see job", "easily apply", "just posted", "unsubscribe", "edit",
+                "privacy policy", "terms", "help centre", "help center", "manage job alerts",
+                "since yesterday", "for last 7 days", "unsubscribe from this job alert"}
+_AGE = re.compile(r'^(just posted|today|\d+\+? (day|days|hour|hours) ago|active \d+ days? ago)$', re.I)
+MAX_INDEED_LINKS = 60        # tracking links resolved per run (one redirect lookup each)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def _redirect_target(url):
+    """Where a tracking link points, without following it to the page itself."""
+    try:
+        urllib.request.build_opener(_NoRedirect).open(
+            urllib.request.Request(url, headers=_UA), timeout=15)
+    except urllib.error.HTTPError as e:
+        return e.headers.get("Location", "") if 300 <= e.code < 400 else ""
+    except Exception:
+        return ""
+    return ""
 _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 _SALARY = re.compile(r'₹\s*([\d.]+)\s*-\s*([\d.]+)\s*LPA', re.IGNORECASE)
@@ -204,22 +226,46 @@ def parse_linkedin_mail(raw_html, budget):
     return jobs
 
 
-def parse_card_mail(raw_html, source):
-    """Foundit / Indeed alert mails: one card per job id — title link, then company | city."""
+_RUPEE_PAY = re.compile(r'₹\s*([\d,]+)(?:\s*-\s*₹?\s*([\d,]+))?\s*(?:a|per)\s*(month|year)', re.I)
+
+
+def _rupee_lpa(text):
+    """Top of an Indeed-style '₹25,000 - ₹45,000 a month' range, in LPA."""
+    m = _RUPEE_PAY.search(text or "")
+    if not m:
+        return None
+    top = float((m.group(2) or m.group(1)).replace(",", ""))
+    return round(top * (12 if m.group(3).lower() == "month" else 1) / 1e5, 1)
+
+
+def parse_card_mail(raw_html, source, budget=MAX_INDEED_LINKS):
+    """Foundit / Indeed alert mails: one card per job id — title link, then company | city.
+
+    Indeed wraps each job in an engage.indeed.com tracking link; its redirect
+    target carries the job key (jk), so the link is resolved, never opened."""
     raw = html.unescape(raw_html or "")
     pattern, base = ((_FOUNDIT_JOB, "https://www.foundit.in/job/{}") if source == "Foundit"
                      else (_INDEED_JK, "https://in.indeed.com/viewjob?jk={}"))
     jobs, seen = [], set()
     for a in _A_TAG.finditer(raw):
         href = urllib.parse.unquote(a.group(1))
+        title = _text(a.group(2)).strip("| ").strip("\u200b| ").strip()
+        if len(title) < 4 or title.lower() in _SKIP_ANCHOR:
+            continue
         m = pattern.search(href)
-        title = _text(a.group(2)).strip("| ").strip()
-        if not m or m.group(1) in seen or len(title) < 4 or title.lower() in _SKIP_ANCHOR:
+        if not m and source == "Indeed" and "engage.indeed.com" in href and budget > 0:
+            budget -= 1
+            m = pattern.search(_redirect_target(a.group(1)))
+            time.sleep(0.3)
+        if not m or m.group(1) in seen:
             continue
         seen.add(m.group(1))
-        after = [p.strip() for p in _text(raw[a.end():a.end() + 1500]).split("|")
-                 if p.strip() and p.strip().lower() not in _SKIP_ANCHOR and not p.strip().startswith("<")]
+        after = [p.strip().lstrip("-– ").strip() for p in _text(raw[a.end():a.end() + 1500]).split("|")]
+        after = [p for p in after if p and p.lower() not in _SKIP_ANCHOR
+                 and not _AGE.match(p) and not p.startswith("<") and not re.fullmatch(r'[\d.]+', p)]
         note, top = _salary_note(" | ".join(after[:6]))
+        if top is None:
+            top = _rupee_lpa(" | ".join(after[:6]))
         jobs.append({
             "title":       title[:160],
             "org":         (after[0] if after else source)[:120],
