@@ -76,7 +76,7 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 
 MIN_AI_SCORE      = 4        # same bar as the alerts: apply to every India / remote alert
 MAX_SENT_PER_DAY  = 10
-MAX_KITS_PER_RUN  = 15
+MAX_KITS_PER_RUN  = 40
 KITS_TO_TELEGRAM  = False    # kits go only to the log, where the Cowork browser agent applies from it
 DESC_CHARS        = 6000
 
