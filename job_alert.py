@@ -1965,7 +1965,7 @@ AI_MODEL          = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 AI_BATCH_SIZE     = 8
 AI_CALL_GAP_SECS  = 7        # free tier allows ~10 requests/minute
 AI_429_BACKOFF    = 30
-AI_MAX_JOBS       = 150      # per run; keeps cost and LinkedIn fetches bounded
+AI_MAX_JOBS       = 260      # per run; keeps cost and LinkedIn fetches bounded
 AI_DESC_CHARS     = 1500
 AI_MIN_SCORE      = 4        # below this the job is not alerted...
 CV_PROFILE_FILE   = os.path.join(DATA_DIR, "cv_profile.txt")
@@ -2095,7 +2095,7 @@ def ai_rerank(jobs):
                 # 8/10 in a test and dropped it in the live run of 30 Oct 2026.
                 # A strong keyword match goes out as LOW with Gemini's reason,
                 # so the candidate can judge it.
-                if j["relevance"] == "HIGH" or org_is_dev_sector(j.get("org", "")):
+                if score >= 3 and (j["relevance"] == "HIGH" or org_is_dev_sector(j.get("org", ""))):
                     j["relevance"] = "LOW"
                     kept.append(j)
                 continue

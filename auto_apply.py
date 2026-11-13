@@ -345,7 +345,20 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     for job in todo:
         text  = fetch_full_text(job, fetch_page, fetch_bytes)
         if len(text) < 300:
-            print(f"  [auto-apply] no posting text for {job['title']} — retry next run.")
+            # Google Jobs / Glassdoor / Indeed pages block scripts, so retrying never
+            # helps. Queue it for the browser agent, which reads the page itself and
+            # writes the cover letter from it.
+            if kits >= MAX_KITS_PER_RUN:
+                continue
+            kits += 1
+            applied.append({"key": _key(job), "title": job["title"], "org": job["org"],
+                            "url": job["url"], "date": today, "ai_score": job.get("ai_score"),
+                            "subject": f"Application for {job['title']}",
+                            "body": ("(No cover letter yet: the bot could not read this posting. "
+                                     "Cowork: open the job, read the description, and write 150–200 "
+                                     "words from CV facts only if a cover letter is asked for.)"),
+                            "cv": os.path.relpath(pick_cv(job), DATA_DIR), "method": "kit"})
+            print(f"  [auto-apply] kit (no posting text, Cowork reads the page): {job['title']}")
             continue
         email = find_application_email(text)
         try:
