@@ -1,5 +1,5 @@
 """
-Job-alert emails — jobs from Naukri, iimjobs, LinkedIn, Foundit and Indeed, read from the applicant's Gmail.
+Job-alert emails — jobs from Naukri, iimjobs, LinkedIn, Foundit, Indeed, Glassdoor, Google Jobs and Michael Page, read from the applicant's Gmail.
 
 Naukri and iimjobs block scripts on their sites, but both email jobs to their
 users: recruiter "Job | <title> in <company>" mails, saved-search alerts and
@@ -25,7 +25,8 @@ MAX_MESSAGES  = 150
 
 SENDER_QUERY = ("from:(naukri.com OR iimjobs.com OR jobalerts-noreply@linkedin.com OR "
                 "jobs-noreply@linkedin.com OR jobs-listings@linkedin.com OR "
-                "jobmessenger@monsterindia.com OR foundit.in OR indeed.com) -from:minis.naukri.com")
+                "jobmessenger@monsterindia.com OR foundit.in OR indeed.com OR noreply@glassdoor.com OR "
+                "notify-noreply@google.com OR michaelpage.co.in) -from:minis.naukri.com")
 MAX_LINKEDIN_JOBS = 40       # LinkedIn job pages fetched per run (one guest request each)
 # Account / marketing mails from these senders that carry no job
 NOT_JOB_SUBJECT = re.compile(
@@ -279,12 +280,110 @@ def parse_card_mail(raw_html, source, budget=MAX_INDEED_LINKS):
     return jobs
 
 
+_GD_JOB = re.compile(r'jobListingId=(\d+)')
+_MP_JOB = re.compile(r'https://www\.michaelpage\.co\.in/job-detail/[^"?\s]+')
+_K_PAY = re.compile(r'₹\s*([\d.]+)\s*([KL])(?:\s*-\s*₹\s*([\d.]+)\s*([KL]))?', re.I)
+_INR_YEAR = re.compile(r'INR\s*([\d,]+)(?:\s*-\s*INR\s*([\d,]+))?\s*per year', re.I)
+
+
+def _k_pay_lpa(text):
+    """Glassdoor '₹16K - ₹25K' (per month) or '₹12L - ₹18L' (per year), as LPA."""
+    m = _K_PAY.search(text or "")
+    if not m:
+        return None
+    val, unit = (m.group(3), m.group(4)) if m.group(3) else (m.group(1), m.group(2))
+    v = float(val)
+    if unit.upper() == "L":
+        return round(v, 1)
+    # under ₹200K is a monthly figure (₹25K); larger K figures are yearly (₹360K = 3.6 LPA)
+    return round(v * 12 / 100 if v < 200 else v / 100, 1)
+
+
+def parse_glassdoor_mail(raw_html):
+    """Glassdoor alerts: each job link's text is 'Company | [rating ★] | Title | City | pay'."""
+    raw = html.unescape(raw_html or "")
+    jobs, seen = [], set()
+    for a in _A_TAG.finditer(raw):
+        m = _GD_JOB.search(a.group(1))
+        if not m or m.group(1) in seen:
+            continue
+        parts = [p.strip() for p in _text(a.group(2)).split("|")]
+        parts = [p for p in parts if p and "★" not in p and not re.fullmatch(r'[\d.]+', p)]
+        if len(parts) < 2:
+            continue
+        seen.add(m.group(1))
+        rest = " | ".join(parts[2:])
+        jobs.append({
+            "title": parts[1][:160], "org": parts[0][:120],
+            "location": (parts[2] if len(parts) > 2 else "India")[:80],
+            "url": f"https://www.glassdoor.co.in/job-listing/j?jl={m.group(1)}",
+            "updated": "", "source": "Glassdoor", "description": rest[:600],
+            "max_lpa": _k_pay_lpa(rest),
+        })
+    return jobs
+
+
+def parse_google_jobs_mail(raw_html):
+    """Google job alerts: each card is one link — title | company | city | via <site> | date | type."""
+    raw = html.unescape(raw_html or "")
+    jobs, seen = [], set()
+    for a in _A_TAG.finditer(raw):
+        if "notifications.googleapis.com" not in a.group(1):
+            continue
+        parts = [p.strip() for p in _text(a.group(2)).split("|") if p.strip()]
+        parts = [p for p in parts if p not in ("Logo",) and len(p) > 1]
+        if len(parts) < 3 or not parts[-1:] or "via " not in " ".join(parts):
+            continue
+        title, org, loc = parts[0], parts[1], parts[2]
+        if "internship" in " ".join(parts[3:]).lower():
+            continue
+        key = (title.lower(), org.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        via = next((p for p in parts if p.startswith("via ")), "")
+        jobs.append({
+            "title": title[:160], "org": org[:120], "location": loc[:80],
+            "url": "https://www.google.com/search?ibp=htl;jobs&q="
+                   + urllib.parse.quote_plus(f"{title} {org}"),
+            "updated": "", "source": "Google Jobs",
+            "description": f"Listed {via}." if via else "", "max_lpa": None,
+        })
+    return jobs
+
+
+def parse_michaelpage_mail(raw_html):
+    """Michael Page alerts: title link, 'City, contract type, INR x - INR y per year', summary,
+    and the real job-detail URL (in the Outlook button markup)."""
+    raw = html.unescape(raw_html or "")
+    jobs, last = [], 0
+    for m in _MP_JOB.finditer(raw):
+        url = m.group(0)
+        block = [p.strip() for p in _text(raw[last:m.start()]).split("|") if p.strip()]
+        last = m.end()
+        if any(j["url"] == url for j in jobs):
+            continue
+        idx = next((i for i, p in enumerate(block) if "per year" in p or re.search(r', (Permanent|Temporary|Contract)', p)), None)
+        if idx is None or idx == 0:
+            continue
+        title = re.split(r'",\s*"', block[idx - 1].strip('"'))[0].strip('" ')
+        pay = _INR_YEAR.search(block[idx])
+        top = float((pay.group(2) or pay.group(1)).replace(",", "")) / 1e5 if pay else None
+        jobs.append({
+            "title": title[:160], "org": "Michael Page client",
+            "location": block[idx].split(",")[0][:80], "url": url.split("?")[0],
+            "updated": "", "source": "Michael Page",
+            "description": re.sub(r'<.*', '', " ".join(block[idx:idx + 3]))[:800], "max_lpa": top,
+        })
+    return jobs
+
+
 def fetch_email_jobs(address, app_password, min_lpa=12):
     """Jobs from recent Naukri / iimjobs / LinkedIn alert emails. Never raises."""
     if not address or not app_password:
         print("\n[Email alerts] skipped — no Gmail address or app password.")
         return []
-    print(f"\n[Email alerts] Reading Naukri / iimjobs / LinkedIn / Foundit / Indeed mails from the last {LOOKBACK_DAYS} days...")
+    print(f"\n[Email alerts] Reading job-alert mails (8 sites) from the last {LOOKBACK_DAYS} days...")
     jobs, seen, li_count = [], set(), 0
     try:
         box = imaplib.IMAP4_SSL("imap.gmail.com", 993)
@@ -303,12 +402,21 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
             if NOT_JOB_SUBJECT.search(subject):
                 continue
             raw = _html_part(msg)
-            source = ("iimjobs" if "iimjobs" in sender else
+            source = ("Glassdoor" if "glassdoor" in sender else
+                      "Google Jobs" if "notify-noreply@google.com" in sender else
+                      "Michael Page" if "michaelpage" in sender else
+                      "iimjobs" if "iimjobs" in sender else
                       "LinkedIn alert email" if "linkedin" in sender else
                       "Foundit" if ("foundit" in sender or "monsterindia" in sender) else
                       "Indeed" if "indeed" in sender else "Naukri")
             found = []
-            if source in ("Foundit", "Indeed"):
+            special = {"Glassdoor": parse_glassdoor_mail, "Google Jobs": parse_google_jobs_mail,
+                       "Michael Page": parse_michaelpage_mail}
+            if source in special:
+                found = special[source](raw)
+                if not found:
+                    continue
+            elif source in ("Foundit", "Indeed"):
                 found = parse_card_mail(raw, source)
                 if not found:
                     continue
