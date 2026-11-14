@@ -216,9 +216,12 @@ def find_application_email(text):
     return None
 
 
+REMOTE = re.compile(r'remote|work from home|\bwfh\b|anywhere|worldwide|home[- ]based|telecommut|virtual', re.I)
+
+
 def eligible(job, is_bangalore):
     loc = (job.get("location") or "").lower()
-    if not (is_bangalore(job) or "remote" in loc):
+    if not (is_bangalore(job) or REMOTE.search(loc + " " + job.get("title", ""))):
         return False
     score = job.get("ai_score")
     if score is None:
@@ -329,7 +332,7 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     why = {"not in India/remote": 0, f"fit below {MIN_AI_SCORE}": 0, "junior title": 0, "already applied": 0}
     for j in jobs:
         loc = (j.get("location") or "").lower()
-        if not (is_bangalore(j) or "remote" in loc):
+        if not (is_bangalore(j) or REMOTE.search(loc + " " + j.get("title", ""))):
             why["not in India/remote"] += 1
         elif (j.get("ai_score") if j.get("ai_score") is not None else (8 if j.get("relevance") == "HIGH" else 0)) < MIN_AI_SCORE:
             why[f"fit below {MIN_AI_SCORE}"] += 1
