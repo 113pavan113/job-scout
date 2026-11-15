@@ -54,7 +54,7 @@ jobs:
         run: |
           git config user.name  "job-scout-bot"
           git config user.email "job-scout-bot@users.noreply.github.com"
-          for f in seen_jobs.json applied_jobs.json APPLICATIONS.md logs/last_run.log; do
+          for f in seen_jobs.json applied_jobs.json APPLICATIONS.md COWORK_TODO.md logs/last_run.log; do
             [ -e "$f" ] && git add "$f"
           done
           git diff --cached --quiet || git commit -q -m "chore: update seen jobs [skip ci]"

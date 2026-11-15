@@ -19,6 +19,8 @@ it the bot only sends kits. Every application is logged in applied_jobs.json,
 and nothing is sent twice to the same organisation for the same role.
 """
 
+import difflib
+import hashlib
 import io
 import json
 import os
@@ -125,26 +127,94 @@ def write_log(entries):
         "",
         f"_Updated {datetime.now().strftime('%d %b %Y, %H:%M')} (UTC) by the job bot._",
         "",
-        f"**{len(emailed)} emailed automatically** · **{len(kits)} sent to you as kits** "
-        "(apply via the link — the bot cannot submit portals or LinkedIn).",
+        f"**{len(emailed)} emailed automatically** · **{len(kits)} kits** for the browser agent. "
+        "Open jobs are listed in COWORK_TODO.md.",
         "",
-        "| Date | Role | Organisation | How | Fit | Link |",
-        "|---|---|---|---|---|---|",
+        "| ID | Date | Role | Organisation | How | Fit | Link |",
+        "|---|---|---|---|---|---|---|",
     ]
     ordered = sorted(entries, key=lambda e: e.get("date", ""), reverse=True)
     for e in ordered:
-        how = f"✅ Emailed to {e.get('to')}" if e.get("method") == "email" else "📝 Kit — apply yourself"
-        lines.append(f"| {e.get('date','')} | {cell(e.get('title'))} | {cell(e.get('org'))} | "
+        how = (f"✅ Emailed to {e.get('to')}" if e.get("method") == "email" else
+               "📝 Kit" if (e.get("ai_score") or 0) >= MIN_QUEUE_SCORE else "⏭ Low fit — not queued")
+        lines.append(f"| {kit_id(e)} | {e.get('date','')} | {cell(e.get('title'))} | {cell(e.get('org'))} | "
                      f"{how} | {e.get('ai_score') or ''} | [posting]({e.get('url','')}) |")
     lines += ["", "## Cover letters", ""]
     for e in ordered:
         if not e.get("body"):
             continue
-        lines += [f"<details><summary>{e.get('date','')} — {cell(e.get('title'))}, {cell(e.get('org'))}</summary>",
+        lines += [f"<details><summary>{kit_id(e)} · {e.get('date','')} — {cell(e.get('title'))}, {cell(e.get('org'))}</summary>",
                   "", f"**Subject:** {e.get('subject','')}", "",
                   f"**CV to attach:** {e.get('cv') or os.path.relpath(CV_FILE, DATA_DIR)}", "", "```", e["body"], "```", "", "</details>", ""]
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
+    write_todo(entries)
+
+
+MIN_QUEUE_SCORE = 5      # the browser agent skips weaker fits, so they are not queued for it
+_REMOTE_TXT = re.compile(r'remote|work from home|\bwfh\b|anywhere|worldwide|home[- ]based|virtual', re.I)
+_BLR_TXT = re.compile(r'bengaluru|bangalore', re.I)
+
+
+def _norm(s):
+    return re.sub(r'[^a-z0-9]+', ' ', (s or "").lower()).strip()
+
+
+def _tracker_rows():
+    """Rows of the browser agent's tracker (APPLIED_BY_COWORK.md), as lower-case text."""
+    path = os.path.join(DATA_DIR, "APPLIED_BY_COWORK.md")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [l for l in f if re.match(r'\|\s*\d+\s*\|', l)]
+
+
+def _logged(e, rows, ids):
+    """Has the browser agent already logged this kit (by ID, link, or organisation + role)?"""
+    if kit_id(e) in ids:
+        return True
+    url = (e.get("url") or "").split("?")[0].rstrip("/").lower()
+    org, title = _norm(e.get("org")), _norm(e.get("title"))
+    for r in rows:
+        low = r.lower()
+        if url and url in low:
+            return True
+        cells = [_norm(c) for c in r.split("|")]
+        if org and any(org[:20] in c or (c and c[:20] in org) for c in cells if len(c) > 3):
+            if any(difflib.SequenceMatcher(None, title, c).ratio() >= 0.72 for c in cells if c):
+                return True
+    return False
+
+
+def write_todo(entries):
+    """COWORK_TODO.md: only the kits still waiting, best first — the browser agent's work list."""
+    rows = _tracker_rows()
+    ids = set(re.findall(r'\bK[0-9A-F]{5}\b', "".join(rows)))
+    todo = [e for e in entries if e.get("method") == "kit"
+            and (e.get("ai_score") or 0) >= MIN_QUEUE_SCORE and not _logged(e, rows, ids)]
+    where = lambda e: f"{e.get('location','')} {e.get('title','')} {e.get('url','')}"
+    rank = lambda e: (0 if _BLR_TXT.search(where(e)) else 1 if _REMOTE_TXT.search(where(e)) else 2,
+                      -(e.get("ai_score") or 0))
+    todo.sort(key=lambda e: e.get("date", ""), reverse=True)          # newest first within a tier
+    todo.sort(key=rank)
+    cell = lambda v: str(v or "").replace("|", "/").replace("\n", " ")
+    lines = ["# Cowork to-do", "",
+             f"_Built {datetime.now().strftime('%d %b %Y, %H:%M')} (UTC) by the job bot from APPLICATIONS.md "
+             "minus every job already in APPLIED_BY_COWORK.md._", "",
+             f"**{len(todo)} jobs to apply to**, Bengaluru first, then remote, then by fit. "
+             "Put the ID at the start of the Notes column when you log each one.", "",
+             "| ID | Fit | Role | Organisation | Location | CV | Link |", "|---|---|---|---|---|---|---|"]
+    for e in todo:
+        lines.append(f"| {kit_id(e)} | {e.get('ai_score') or ''} | {cell(e.get('title'))} | {cell(e.get('org'))} | "
+                     f"{cell(e.get('location'))} | {os.path.basename(e.get('cv') or '')} | [job]({e.get('url','')}) |")
+    with open(os.path.join(DATA_DIR, "COWORK_TODO.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"[auto-apply] COWORK_TODO.md: {len(todo)} open job(s) for the browser agent.")
+
+
+def kit_id(entry):
+    """Short stable ID shared by the queue, the to-do list and Cowork's tracker."""
+    return "K" + hashlib.sha1(entry["key"].encode()).hexdigest()[:5].upper()
 
 
 def _key(job):
@@ -351,11 +421,11 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
             # Google Jobs / Glassdoor / Indeed pages block scripts, so retrying never
             # helps. Queue it for the browser agent, which reads the page itself and
             # writes the cover letter from it.
-            if kits >= MAX_KITS_PER_RUN:
+            if kits >= MAX_KITS_PER_RUN or (job.get("ai_score") or 0) < MIN_QUEUE_SCORE:
                 continue
             kits += 1
             applied.append({"key": _key(job), "title": job["title"], "org": job["org"],
-                            "url": job["url"], "date": today, "ai_score": job.get("ai_score"),
+                            "url": job["url"], "location": job.get("location", ""), "date": today, "ai_score": job.get("ai_score"),
                             "subject": f"Application for {job['title']}",
                             "body": ("(No cover letter yet: the bot could not read this posting. "
                                      "Cowork: open the job, read the description, and write 150–200 "
@@ -374,7 +444,7 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
         by_email = (email and app.get("method") == "email" and not app.get("requires_format")
                     and email.lower() in (text or "").lower())
         entry = {"key": _key(job), "title": job["title"], "org": job["org"],
-                 "url": job["url"], "date": today, "ai_score": job.get("ai_score"),
+                 "url": job["url"], "location": job.get("location", ""), "date": today, "ai_score": job.get("ai_score"),
                  "subject": app.get("subject", ""), "body": app.get("body", ""),
                  "cv": os.path.relpath(pick_cv(job, app), DATA_DIR)}
 
@@ -394,7 +464,7 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
                 f"<a href=\"{job['url']}\">Posting →</a>",
             ]))
             print(f"  [auto-apply] SENT: {job['title']} → {email}")
-        elif kits < MAX_KITS_PER_RUN:
+        elif kits < MAX_KITS_PER_RUN and (job.get("ai_score") or 0) >= MIN_QUEUE_SCORE:
             if KITS_TO_TELEGRAM and notify(_kit_message(job, app)) is False:
                 print(f"  [auto-apply] kit not delivered, will retry: {job['title']}")
                 continue
