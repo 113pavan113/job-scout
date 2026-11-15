@@ -151,7 +151,7 @@ def write_log(entries):
     write_todo(entries)
 
 
-MIN_QUEUE_SCORE = 5      # the browser agent skips weaker fits, so they are not queued for it
+MIN_QUEUE_SCORE = 4      # same bar as the alerts and the browser agent
 _REMOTE_TXT = re.compile(r'remote|work from home|\bwfh\b|anywhere|worldwide|home[- ]based|virtual', re.I)
 _BLR_TXT = re.compile(r'bengaluru|bangalore', re.I)
 
