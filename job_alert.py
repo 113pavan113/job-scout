@@ -1425,6 +1425,11 @@ LINKEDIN_COMPANIES = [
     # 5 Think tanks and institutes
     "CEEW", "WRI India", "Indian Institute for Human Settlements", "Precision Development",
     "Azim Premji Foundation", "The/Nudge",
+    "ICRIER", "Centre for Social and Economic Progress", "J-PAL South Asia", "Observer Research Foundation",
+    "Vidhi Centre for Legal Policy", "Takshashila Institution", "Samagra", "Primus Partners", "Dasra",
+    "Clinton Health Access Initiative",
+    # 4 Agricultural research (CGIAR) — agri-policy roles
+    "IFPRI", "ICRISAT", "IRRI",
     # 6 Development and bilateral agencies
     "GIZ", "Gates Foundation", "Tata Trusts", "Digital Green",
     # 7 Trade promotion
@@ -2491,6 +2496,7 @@ def main():
         (GOV_NAME,           scrape_government),
         ("Email alerts",     lambda: __import__("email_alerts").fetch_email_jobs(
                                  _applicant().get("email", ""), os.environ.get("GMAIL_APP_PASSWORD", ""))),
+        ("Employer careers", lambda: __import__("employer_feeds").fetch_employer_jobs()),
         (FJA_NAME,           scrape_freejobalert),
         (LINKEDIN_NAME + " follow-list", scrape_linkedin_companies),
         (UNDP_NAME,          scrape_undp),
