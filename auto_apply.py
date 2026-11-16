@@ -237,6 +237,22 @@ def _pdf_text(data):
         return ""
 
 
+_LI_ID = re.compile(r'linkedin\.com/(?:comm/)?jobs/view/(?:[^/?]*?-)?(\d{6,})')
+
+
+def linkedin_closed(job, fetch_page):
+    """True when LinkedIn says the posting is 'No longer accepting applications'."""
+    m = _LI_ID.search(job.get("url", ""))
+    if not m:
+        return False
+    try:
+        page = fetch_page(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}")
+    except Exception:
+        return False                      # can't tell — queue it and let the browser agent check
+    time.sleep(1.0)
+    return "no longer accepting applications" in page.lower()
+
+
 def fetch_full_text(job, fetch_page, fetch_bytes):
     """Full posting text (LinkedIn description, web page or PDF notice)."""
     if len(job.get("description") or "") >= 300:     # carried in from an alert email
@@ -416,6 +432,9 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     kits = 0
 
     for job in todo:
+        if linkedin_closed(job, fetch_page):
+            print(f"  [auto-apply] closed on LinkedIn, not queued: {job['title']}")
+            continue
         text  = fetch_full_text(job, fetch_page, fetch_bytes)
         if len(text) < 300:
             # Google Jobs / Glassdoor / Indeed pages block scripts, so retrying never
