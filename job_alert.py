@@ -1429,7 +1429,10 @@ LINKEDIN_COMPANIES = [
     "Vidhi Centre for Legal Policy", "Takshashila Institution", "Samagra", "Primus Partners", "Dasra",
     "Clinton Health Access Initiative",
     # 4 Agricultural research (CGIAR) — agri-policy roles
-    "IFPRI", "ICRISAT", "IRRI",
+    "IFPRI", "ICRISAT", "IRRI", "CIMMYT", "International Water Management Institute",
+    "International Livestock Research Institute", "WorldFish", "International Potato Center",
+    "Alliance of Bioversity International and CIAT", "CIFOR-ICRAF", "ICARDA", "CGIAR",
+    "Asian Development Bank",
     # 6 Development and bilateral agencies
     "GIZ", "Gates Foundation", "Tata Trusts", "Digital Green",
     # 7 Trade promotion
