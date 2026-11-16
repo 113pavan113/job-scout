@@ -1287,13 +1287,24 @@ def _gov_years():
     return {str(now.year)} | ({str(now.year - 1)} if now.month <= 2 else set())
 
 
+def _gov_fetch(url):
+    """Government sites are slow (NABCONS often exceeds 15 s): one retry with a long timeout."""
+    try:
+        return fetch_page(url)
+    except Exception as e:
+        if "timed out" not in str(getattr(e, "reason", e)):
+            raise
+        with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=45) as r:
+            return r.read().decode("utf-8", errors="replace")
+
+
 def scrape_government():
     print(f"\n[{GOV_NAME}] Fetching vacancy pages...")
     jobs, seen = [], set()
     years = _gov_years()
     for name, url, location in GOV_SOURCES:
         try:
-            content = fetch_page(url)
+            content = _gov_fetch(url)
         except Exception as e:
             print(f"  [{GOV_NAME}] {name}: {e}")
             continue
