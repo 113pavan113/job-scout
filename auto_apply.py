@@ -136,6 +136,7 @@ def write_log(entries):
     ordered = sorted(entries, key=lambda e: e.get("date", ""), reverse=True)
     for e in ordered:
         how = (f"✅ Emailed to {e.get('to')}" if e.get("method") == "email" else
+               f"⛔ Screened out: {cell(e.get('reason'))}" if e.get("method") == "screened_out" else
                "📝 Kit" if (e.get("ai_score") or 0) >= MIN_QUEUE_SCORE else "⏭ Low fit — not queued")
         lines.append(f"| {kit_id(e)} | {e.get('date','')} | {cell(e.get('title'))} | {cell(e.get('org'))} | "
                      f"{how} | {e.get('ai_score') or ''} | [posting]({e.get('url','')}) |")
@@ -170,21 +171,81 @@ def _tracker_rows():
         return [l for l in f if re.match(r'\|\s*\d+\s*\|', l) and "🔁 Retry" not in l]
 
 
+_ORG_NOISE = re.compile(r'\b(the|limited|ltd|pvt|private|llp|inc|llc|plc|corp|corporation|company|co|'
+                        r'india|indian|group|global|international|foundation|services|solutions|'
+                        r'consulting|technologies|acceleration center|centre|center)\b')
+_TITLE_NOISE = re.compile(r'\b(new delhi|delhi|bengaluru|bangalore|mumbai|india|remote|hybrid|national|'
+                          r'the|of|and|for|in|at|a|an|to|with|l\d|i{1,3}|iv|nb)\b')
+
+
+def _org_key(org):
+    o = re.sub(r'\(.*?\)', ' ', (org or "").lower())
+    return re.sub(r'\s+', ' ', _ORG_NOISE.sub(' ', _norm(o))).strip()
+
+
+def _title_words(title):
+    return set(_TITLE_NOISE.sub(' ', _norm(title)).split())
+
+
+def _head_words(title):
+    """Words of the title before the first ' - ', ',', '(' or ':' (the role, not the team)."""
+    t = re.sub(r'^\s*\([^)]*\)\s*', '', (title or "").lower())        # "(Associate) Director, ..." -> "Director, ..."
+    head = re.split(r'\s[-–—|:]\s|,|\(|:', t, maxsplit=1)[0]
+    return _title_words(head)
+
+
+def same_job(org1, title1, org2, title2):
+    """Same employer and the same role, even when sites word the title differently."""
+    a, b = _org_key(org1), _org_key(org2)
+    abbr = lambda o: {_norm(x) for x in re.findall(r'\(([^)]+)\)', o or "")}   # "... (CEEW)"
+    same_org = bool(a and b and (a[:12] in b or b[:12] in a)) or \
+        _norm(org1) in abbr(org2) or _norm(org2) in abbr(org1)
+    if not same_org:
+        return False
+    h1, h2 = _head_words(title1), _head_words(title2)          # the role itself: "Senior Manager", "AVP"...
+    if h1 and h2:
+        if min(len(h1), len(h2)) <= 1:
+            if h1 != h2:
+                return False
+        elif len(h1 & h2) / min(len(h1), len(h2)) < 0.85:
+            return False
+    if difflib.SequenceMatcher(None, _norm(title1), _norm(title2)).ratio() >= 0.72:
+        return True
+    w1, w2 = _title_words(title1), _title_words(title2)
+    small = min(len(w1), len(w2))
+    return small >= 3 and len(w1 & w2) / small >= 0.85
+
+
+def _row_cells(r):
+    c = [x.strip() for x in r.split("|")]
+    return (c[3], c[4]) if len(c) > 4 else ("", "")
+
+
 def _logged(e, rows, ids):
     """Has the browser agent already logged this kit (by ID, link, or organisation + role)?"""
     if kit_id(e) in ids:
         return True
     url = (e.get("url") or "").split("?")[0].rstrip("/").lower()
-    org, title = _norm(e.get("org")), _norm(e.get("title"))
+    if "google.com/search" in url:                     # Google Jobs links differ only in the query
+        url = (e.get("url") or "").rstrip("/").lower()
     for r in rows:
-        low = r.lower()
-        if url and url in low:
+        if url and url in r.lower():
             return True
-        cells = [_norm(c) for c in r.split("|")]
-        if org and any(org[:20] in c or (c and c[:20] in org) for c in cells if len(c) > 3):
-            if any(difflib.SequenceMatcher(None, title, c).ratio() >= 0.72 for c in cells if c):
-                return True
+        role, org = _row_cells(r)
+        if same_job(e.get("org"), e.get("title"), org, role):
+            return True
     return False
+
+
+def repeat_of(job, applied, rows, ids):
+    """A short description of the earlier entry this job repeats, or None."""
+    probe = {"key": _key(job), "url": job.get("url"), "org": job.get("org"), "title": job.get("title")}
+    if _logged(probe, rows, ids):
+        return "already in Cowork tracker"
+    for e in applied:
+        if same_job(job.get("org"), job.get("title"), e.get("org"), e.get("title")):
+            return f"same as queued '{e.get('title')}'"
+    return None
 
 
 def write_todo(entries):
@@ -196,6 +257,12 @@ def write_todo(entries):
         if os.path.exists(rej_path) else set()
     todo = [e for e in entries if e.get("method") == "kit" and kit_id(e) not in rejected
             and (e.get("ai_score") or 0) >= MIN_QUEUE_SCORE and not _logged(e, rows, ids)]
+    todo.sort(key=lambda e: -(e.get("ai_score") or 0))
+    uniq = []
+    for e in todo:                                                     # one row per real job
+        if not any(same_job(e.get("org"), e.get("title"), u.get("org"), u.get("title")) for u in uniq):
+            uniq.append(e)
+    todo = uniq
     where = lambda e: f"{e.get('location','')} {e.get('title','')} {e.get('url','')}"
     rank = lambda e: (0 if _BLR_TXT.search(where(e)) else 1 if _REMOTE_TXT.search(where(e)) else 2,
                       -(e.get("ai_score") or 0))
@@ -435,8 +502,14 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     print(f"\n[auto-apply] {len(todo)} eligible job(s); "
           f"{'email sending ON' if can_send else 'kits only (no GMAIL_APP_PASSWORD)'}.")
     kits = 0
+    rows = _tracker_rows()
+    ids = set(re.findall(r'\bK[0-9A-F]{5}\b', "".join(rows)))
 
     for job in todo:
+        rep = repeat_of(job, applied, rows, ids)
+        if rep:
+            print(f"  [auto-apply] repeat, not queued ({rep}): {job['title']} — {job['org']}")
+            continue
         if linkedin_closed(job, fetch_page):
             print(f"  [auto-apply] closed on LinkedIn, not queued: {job['title']}")
             continue
@@ -464,6 +537,13 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
             print(f"  [auto-apply] Gemini failed for {job['title']}: {e}")
             continue
         time.sleep(7)                     # Gemini free-tier pacing
+        if app.get("dealbreaker"):
+            # The full posting rules him out (years, seniority, sales targets, specialist degree...).
+            applied.append({"key": _key(job), "title": job["title"], "org": job["org"], "url": job["url"],
+                            "location": job.get("location", ""), "date": today, "ai_score": job.get("ai_score"),
+                            "method": "screened_out", "reason": str(app["dealbreaker"])[:160]})
+            print(f"  [auto-apply] screened out on full posting ({app['dealbreaker']}): {job['title']}")
+            continue
 
         by_email = (email and app.get("method") == "email" and not app.get("requires_format")
                     and email.lower() in (text or "").lower())
