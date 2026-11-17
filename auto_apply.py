@@ -191,7 +191,10 @@ def write_todo(entries):
     """COWORK_TODO.md: only the kits still waiting, best first — the browser agent's work list."""
     rows = _tracker_rows()
     ids = set(re.findall(r'\bK[0-9A-F]{5}\b', "".join(rows)))
-    todo = [e for e in entries if e.get("method") == "kit"
+    rej_path = os.path.join(DATA_DIR, "REJECT.md")                     # IDs the user vetoed
+    rejected = set(re.findall(r'\bK[0-9A-F]{5}\b', open(rej_path, encoding="utf-8").read().upper())) \
+        if os.path.exists(rej_path) else set()
+    todo = [e for e in entries if e.get("method") == "kit" and kit_id(e) not in rejected
             and (e.get("ai_score") or 0) >= MIN_QUEUE_SCORE and not _logged(e, rows, ids)]
     where = lambda e: f"{e.get('location','')} {e.get('title','')} {e.get('url','')}"
     rank = lambda e: (0 if _BLR_TXT.search(where(e)) else 1 if _REMOTE_TXT.search(where(e)) else 2,
@@ -204,6 +207,7 @@ def write_todo(entries):
              "minus every job already in APPLIED_BY_COWORK.md._", "",
              f"**{len(todo)} jobs to apply to**, Bengaluru first, then remote, then by fit. "
              "Put the ID at the start of the Notes column when you log each one.", "",
+             "_Don't want one? Add its ID to REJECT.md and Cowork will skip it._", "",
              "| ID | Fit | Role | Organisation | Location | CV | Link |", "|---|---|---|---|---|---|---|"]
     for e in todo:
         lines.append(f"| {kit_id(e)} | {e.get('ai_score') or ''} | {cell(e.get('title'))} | {cell(e.get('org'))} | "
