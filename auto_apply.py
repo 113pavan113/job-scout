@@ -166,7 +166,8 @@ def _tracker_rows():
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
-        return [l for l in f if re.match(r'\|\s*\d+\s*\|', l)]
+        # "🔁 Retry" rows are sent back to the to-do list, so they don't count as logged.
+        return [l for l in f if re.match(r'\|\s*\d+\s*\|', l) and "🔁 Retry" not in l]
 
 
 def _logged(e, rows, ids):
