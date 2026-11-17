@@ -163,12 +163,14 @@ def _norm(s):
 
 def _tracker_rows():
     """Rows of the browser agent's tracker (APPLIED_BY_COWORK.md), as lower-case text."""
-    path = os.path.join(DATA_DIR, "APPLIED_BY_COWORK.md")
-    if not os.path.exists(path):
-        return []
-    with open(path, encoding="utf-8") as f:
-        # "🔁 Retry" rows are sent back to the to-do list, so they don't count as logged.
-        return [l for l in f if re.match(r'\|\s*\d+\s*\|', l) and "🔁 Retry" not in l]
+    rows = []
+    for name in ("APPLIED_BY_COWORK.md", "APPLIED_ARCHIVE.md"):      # live tracker + old finished rows
+        path = os.path.join(DATA_DIR, name)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                # "🔁 Retry" rows are sent back to the to-do list, so they don't count as logged.
+                rows += [l for l in f if re.match(r'\|\s*\d+\s*\|', l) and "🔁 Retry" not in l]
+    return rows
 
 
 _ORG_NOISE = re.compile(r'\b(the|limited|ltd|pvt|private|llp|inc|llc|plc|corp|corporation|company|co|'
