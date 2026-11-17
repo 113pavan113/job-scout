@@ -58,4 +58,8 @@ jobs:
             [ -e "$f" ] && git add "$f"
           done
           git diff --cached --quiet || git commit -q -m "chore: update seen jobs [skip ci]"
-          git pull -q --rebase && git push -q
+          # Bot-written files: if someone edited them meanwhile, the bot's fresh copy wins.
+          for i in 1 2 3; do
+            git pull -q --rebase -X theirs && git push -q && break
+            git rebase --abort 2>/dev/null; sleep 5
+          done
