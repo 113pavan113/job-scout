@@ -2084,7 +2084,12 @@ def _parse_ai_scores(text):
         return {}
     out = {}
     for item in json.loads(text[start:end + 1]):
-        out[int(item["id"])] = (float(item["score"]), str(item.get("reason", "")).strip())
+        try:
+            # Gemini occasionally swaps fields ("score": "<reason text>"); skip just that item
+            # instead of losing the whole batch of 8.
+            out[int(item["id"])] = (float(item["score"]), str(item.get("reason", "")).strip())
+        except (KeyError, TypeError, ValueError):
+            continue
     return out
 
 
