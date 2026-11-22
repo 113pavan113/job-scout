@@ -1610,12 +1610,23 @@ LINKEDIN_INDIA_QUERIES = [
     "responsible sourcing agriculture", "agri export policy",
 ]
 
+# Senior role families searched in the other big hubs and as Remote (Nov 2026):
+# Bengaluru/Delhi searches were returning the same, already-seen jobs every run.
+LINKEDIN_ROLE_QUERIES = [
+    "government relations manager", "public policy manager", "corporate affairs manager",
+    "regulatory affairs manager", "strategy manager", "business development manager government",
+    "partnerships manager", "programme manager", "PMU consultant", "sustainability manager",
+]
+
 LINKEDIN_LOCATIONS = [
     ("Bengaluru, Karnataka, India", LINKEDIN_BLR_QUERIES),
     ("Hyderabad, Telangana, India", LINKEDIN_SOUTH_QUERIES),
     ("Chennai, Tamil Nadu, India",  LINKEDIN_SOUTH_QUERIES),
     ("Delhi, India",                LINKEDIN_DEL_QUERIES),
     ("India",                       LINKEDIN_INDIA_QUERIES),
+    ("Mumbai, Maharashtra, India",  LINKEDIN_ROLE_QUERIES),
+    ("Gurugram, Haryana, India",    LINKEDIN_ROLE_QUERIES),
+    ("India|remote",                LINKEDIN_ROLE_QUERIES),   # f_WT=2: remote roles open to India
 ]
 
 LINKEDIN_TPR         = "r604800"   # posted in the last 7 days
@@ -1673,12 +1684,11 @@ def scrape_linkedin():
     for location, queries in LINKEDIN_LOCATIONS:
         for query in queries:
             for page in range(LINKEDIN_MAX_PAGES):
-                params = urllib.parse.urlencode({
-                    "keywords": query,
-                    "location": location,
-                    "f_TPR":    LINKEDIN_TPR,
-                    "start":    page * 10,
-                })
+                where, _, mode = location.partition("|")
+                q = {"keywords": query, "location": where, "f_TPR": LINKEDIN_TPR, "start": page * 10}
+                if mode == "remote":
+                    q["f_WT"] = "2"
+                params = urllib.parse.urlencode(q)
                 time.sleep(LINKEDIN_DELAY_SECS)
                 content = None
                 for attempt in range(2):
@@ -1782,6 +1792,17 @@ CORPORATE_NON_FIT = re.compile(
 
 # Policy-team titles at big private employers. "Regulatory affairs" is left out
 # on purpose: at a pharma or med-tech company it means drug filings, not policy.
+# The role families the CV fits, whatever the employer's sector (Nov 2026). A title
+# like this reaches Gemini even without an agri/food/development keyword — Gemini's
+# hard caps (junior, sales, IT, finance, pharma, 12+ yrs...) then do the filtering.
+TARGET_ROLE_TITLE = re.compile(
+    r'polic|public affairs|corporate affairs|external affairs|regulatory affairs|'
+    r'government (relations|affairs|liaison|partnership|engagement|business)|govt|liaison|advocacy|'
+    r'strateg|business development|partnership|alliances|chief of staff|founder.?s office|'
+    r'program(me)? (manager|lead|head|director|officer)|project (manager|lead)|\bpmu\b|'
+    r'sustainab|\besg\b|market access|stakeholder|institutional|trade|export|'
+    r'agri|food|rural|livelihood|cooperative|value chain', re.IGNORECASE)
+
 POLICY_TEAM_TITLE = re.compile(
     r'policy|public affairs|corporate affairs|external affairs|government', re.IGNORECASE)
 
@@ -2536,7 +2557,8 @@ def main():
     for job in all_jobs:
         job["score"], job["kw_score"], job["has_core"], job["title_core"], job["matched"] = score_job(job)
         job["relevance"] = classify(job["kw_score"], job["has_core"], job["title_core"])
-        if title_is_non_fit(job["title"], job.get("org", "")):
+        job["non_fit"] = title_is_non_fit(job["title"], job.get("org", ""))
+        if job["non_fit"]:
             job["relevance"] = "NO MATCH"
         elif job.get("from_email") and job["relevance"] == "NO MATCH":
             # Naukri / iimjobs / LinkedIn already picked these for this profile:
@@ -2567,6 +2589,11 @@ def main():
     # dev-sector sources, so it only earns an alert at MEDIUM or above.
     # Its LOW matches still land in the CSV/HTML for manual browsing.
     def alertable(j):
+        # A target-role title always reaches Gemini, at any employer (Nov 2026):
+        # the keyword gates below were dropping "Government Relations Manager" at
+        # non-agri companies, and Gemini's stricter scoring now does the filtering.
+        if not j.get("non_fit") and TARGET_ROLE_TITLE.search(j["title"].replace("_", " ")):
+            return True
         if j["relevance"] == "NO MATCH":
             return False
         # No location gate: the candidate is open to moving for a strong role
@@ -2588,6 +2615,11 @@ def main():
 
     candidates  = [j for j in new_jobs if alertable(j)]
     candidates.sort(key=lambda j: not j.get("from_email"))   # email jobs always reach Gemini
+    if len(candidates) > AI_MAX_JOBS:
+        # Only what Gemini scores this run is marked seen; the overflow waits for the
+        # next run instead of being marked seen unscored (and lost).
+        print(f"\n{len(candidates) - AI_MAX_JOBS} candidate(s) over the {AI_MAX_JOBS}-job cap wait for the next run.")
+        candidates = candidates[:AI_MAX_JOBS]
     new_matches = ai_rerank(candidates)
     # Only jobs that reached the alert / Gemini stage are marked seen. Jobs the
     # keyword filters dropped stay unseen, so they are re-scored every run for
