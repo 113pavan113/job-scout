@@ -150,6 +150,54 @@ def parse_alert_mail(raw_html, source):
     return jobs
 
 
+_NK_LISTING = re.compile(r'naukri\.com/job-listings-[A-Za-z0-9\-]+', re.IGNORECASE)
+MAX_NAUKRI_REDIRECTS = 40    # tracking links resolved per run (one redirect lookup each)
+
+
+def parse_naukri_wrapped(raw_html, budget=MAX_NAUKRI_REDIRECTS):
+    """Naukri job-alert mails whose job links are wrapped in tracking or login redirects.
+
+    The real job-listings URL is either URL-encoded inside the link, or is where the
+    tracking link redirects to; the redirect is resolved, never followed to the page."""
+    raw = html.unescape(raw_html or "")
+    jobs, seen = [], set()
+    for a in _A_TAG.finditer(raw):
+        href = a.group(1)
+        title = _text(a.group(2)).strip("| ").strip()
+        if len(title) < 6 or len(title) > 160 or title.lower() in _SKIP_ANCHOR:
+            continue
+        flat = urllib.parse.unquote(urllib.parse.unquote(href))
+        m = _NK_LISTING.search(flat)
+        if (not m and budget > 0 and "naukri" in href.lower()
+                and not re.search(r'unsubscribe|setting|preference|privacy|terms|help', flat, re.I)):
+            budget -= 1
+            m = _NK_LISTING.search(urllib.parse.unquote(_redirect_target(href)))
+            time.sleep(0.3)
+        if not m:
+            continue
+        url = "https://www." + m.group(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        around = _text(raw[a.end():a.end() + 1500])[:400]
+        note, top = _salary_note(around)
+        parts = [x.strip() for x in around.split("|") if x.strip()]
+        loc = next((x for x in parts if re.search(
+            r'bengaluru|bangalore|hyderabad|chennai|kochi|mumbai|delhi|gurgaon|gurugram|noida|pune|'
+            r'remote|work from home|india|kolkata', x, re.I)), "")
+        jobs.append({
+            "title":       title,
+            "org":         (parts[0] if parts else "Naukri")[:120],
+            "location":    (loc or "India")[:80] + (f" · {note}" if note else ""),
+            "url":         url,
+            "updated":     "",
+            "source":      "Naukri",
+            "description": around,
+            "max_lpa":     top,
+        })
+    return jobs
+
+
 def parse_iimjobs_mail(subject, raw_html):
     """iimjobs recommendation mails: one job card per job id (single-job mails also carry the JD)."""
     raw = raw_html or ""
@@ -385,6 +433,7 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
         return []
     print(f"\n[Email alerts] Reading job-alert mails (8 sites) from the last {LOOKBACK_DAYS} days...")
     jobs, seen, li_count = [], set(), 0
+    stats, jstats, skipped = {}, {}, {}
     try:
         box = imaplib.IMAP4_SSL("imap.gmail.com", 993)
         box.login(address, app_password.replace(" ", ""))
@@ -400,6 +449,8 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
             subject = str(make_header(decode_header(msg.get("Subject", ""))))
             sender  = msg.get("From", "").lower()
             if NOT_JOB_SUBJECT.search(subject):
+                k = "Naukri" if "naukri" in sender else "other"
+                skipped[k] = skipped.get(k, 0) + 1
                 continue
             raw = _html_part(msg)
             source = ("Glassdoor" if "glassdoor" in sender else
@@ -432,6 +483,14 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
                 found = [job] if job else []
             if not found:
                 found = parse_alert_mail(raw, source)
+            if not found and source == "Naukri":
+                found = parse_naukri_wrapped(raw)
+                if not found:              # log link hosts only (public log: no subjects, no URLs)
+                    hosts = sorted({urllib.parse.urlparse(h).netloc for h in
+                                    re.findall(r'href="(https?://[^"]+)"', raw)} - {""})
+                    print(f"  [Email alerts] Naukri mail with no jobs parsed; link hosts: {', '.join(hosts[:8])}")
+            stats[source] = stats.get(source, 0) + 1
+            jstats[source] = jstats.get(source, 0) + len(found)
             for job in found:
                 if job["url"] in seen:
                     continue
@@ -443,5 +502,9 @@ def fetch_email_jobs(address, app_password, min_lpa=12):
         box.logout()
     except Exception as e:
         print(f"[Email alerts] Error: {type(e).__name__}: {e}")
+    if stats:
+        print("[Email alerts] mails → jobs by site: " +
+              ", ".join(f"{k} {stats[k]}→{jstats.get(k, 0)}" for k in sorted(stats)) +
+              (f" (non-job subjects skipped: {skipped})" if skipped else ""))
     print(f"[Email alerts] {len(jobs)} jobs from email.")
     return jobs
