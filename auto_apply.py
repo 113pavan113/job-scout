@@ -196,6 +196,34 @@ def _head_words(title):
     return _title_words(head)
 
 
+# Gemini sometimes invents dealbreakers ("requires education-sector experience",
+# "asks 10+ years"). Only the hard rules in writer_prompt.txt may screen a job out.
+_HARD_REASON = re.compile(
+    r'sales|revenue|quota|fundrais|\bIT\b|software|data[- ]engineer|digital[- ]marketing|'
+    r'finance|banking|M&A|deals|audit|insurance|pharma|health|clinical|medic|'
+    r'engineering degree|technical (bachelor|degree)|\bB\.?E\b|B\.?Tech|law|LL\.?B|\bCA\b|chartered|'
+    r'dairy techn|veterinar|carbon|GHG|energy model|urban plan|science degree|chemistry|'
+    r'language|reside|work (rights|permit|authori)|visa|outside India|junior|under 4|intern',
+    re.IGNORECASE)
+
+
+def real_dealbreaker(reason):
+    """True if Gemini's dealbreaker is one of the hard rules, not a domain preference."""
+    if re.search(r'more than 12|15\+ years|director/head/VP', reason, re.I):
+        return True                   # Gemini named the hard years rule itself
+    nums = [int(n) for n in re.findall(r'\d{1,2}', reason)]
+    if re.search(r'years?|yrs', reason, re.I) and nums:
+        low = min(n for n in nums if n != 7) if any(n != 7 for n in nums) else 0
+        if (low > 12 or (low == 12 and (max(nums) > 12 or re.search(r'more than 12', reason, re.I)))
+                or re.search(r'1[3-9]\+|[2-9]\d\+', reason)):
+            return True               # asks more than 12 years
+        if low and low < 4 and re.search(r'junior|under|less than|0-|1-|2-|3-', reason, re.I):
+            return True               # junior role
+        if not _HARD_REASON.search(reason):
+            return False              # 8-12 / 10+ / 11+ years alone is fine
+    return bool(_HARD_REASON.search(reason))
+
+
 def same_job(org1, title1, org2, title2):
     """Same employer and the same role, even when sites word the title differently."""
     a, b = _org_key(org1), _org_key(org2)
@@ -539,6 +567,9 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
             print(f"  [auto-apply] Gemini failed for {job['title']}: {e}")
             continue
         time.sleep(7)                     # Gemini free-tier pacing
+        if app.get("dealbreaker") and not real_dealbreaker(str(app["dealbreaker"])):
+            print(f"  [auto-apply] dealbreaker ignored (not a hard rule): {app['dealbreaker']} — {job['title']}")
+            app["dealbreaker"] = None
         if app.get("dealbreaker"):
             # The full posting rules him out (years, seniority, sales targets, specialist degree...).
             applied.append({"key": _key(job), "title": job["title"], "org": job["org"], "url": job["url"],
