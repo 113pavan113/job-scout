@@ -2351,6 +2351,31 @@ def build_bangalore_spotlight(new_jobs, all_jobs):
     return msgs[0] if msgs else None   # spotlight fits in one message
 
 
+def build_digest(new_jobs, top_n=5):
+    """One Telegram message per run: counts plus the top new Bengaluru jobs."""
+    run_time = datetime.now().strftime("%d %b %Y, %I:%M %p")
+    def is_blr(j):
+        loc = (j.get("location", "") + " " + j["source"]).lower()
+        return any(m in loc for m in BANGALORE_MARKERS)
+    rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    blr = sorted((j for j in new_jobs if is_blr(j)), key=lambda j: rank.get(j["relevance"], 3))
+    n = lambda r: sum(1 for j in new_jobs if j["relevance"] == r)
+    lines = [
+        "📬 <b>Job Alert</b>",
+        f"<i>{run_time}</i>",
+        "",
+        f"<b>{len(new_jobs)} new matches</b> · HIGH {n('HIGH')} · MEDIUM {n('MEDIUM')} · LOW {n('LOW')}",
+        f"Bengaluru: {len(blr)}",
+    ]
+    if blr:
+        lines += ["", f"🏙️ <b>Top Bengaluru</b>"]
+        for j in blr[:top_n]:
+            lines.append(f'• <a href="{j["url"]}">{html.escape(j["title"][:90])}</a> — '
+                         f'{html.escape(j["org"][:40])} <b>{j["relevance"]}</b>')
+    lines += ["", "Cowork applies from COWORK_TODO.md. Full list: this run's HTML report."]
+    return "\n".join(lines)[:TELEGRAM_MAX_CHARS]
+
+
 def send_summary_message(all_jobs):
     run_time = datetime.now().strftime("%d %b %Y, %I:%M %p")
     high   = len([j for j in all_jobs if j["relevance"] == "HIGH"])
@@ -2652,22 +2677,12 @@ def main():
             print(f"         {j['org']}  [{j['source']}]")
             print(f"         {j['url']}\n")
 
-    # Bangalore spotlight first, then full India alert — sent to both Telegram & Discord
+    # One short digest per run (the full list is in the HTML report and the log;
+    # Cowork applies from COWORK_TODO.md, so a long Telegram list only adds noise).
     delivered = True
-    blr_msg = build_bangalore_spotlight(new_matches, all_jobs)
-    if blr_msg:
-        print("\nSending Bangalore spotlight...")
-        delivered = send_telegram(blr_msg) and delivered
-
     if new_matches:
-        high_new   = [j for j in new_matches if j["relevance"] == "HIGH"]
-        medium_new = [j for j in new_matches if j["relevance"] == "MEDIUM"]
-        low_new    = [j for j in new_matches if j["relevance"] == "LOW"]
-
-        messages = build_alert_messages(new_matches, len(all_jobs))
-        print(f"\nSending alert for {len(new_matches)} new jobs ({len(messages)} message(s))...")
-        for msg in messages:
-            delivered = send_telegram(msg) and delivered
+        print(f"\nSending digest for {len(new_matches)} new jobs...")
+        delivered = send_telegram(build_digest(new_matches)) and delivered
     else:
         print("\nNo new matching jobs. Sending daily summary...")
         send_summary_message(all_jobs)
