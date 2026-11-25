@@ -155,6 +155,27 @@ def write_log(entries):
 MIN_QUEUE_SCORE = 4      # same bar as the alerts and the browser agent
 _REMOTE_TXT = re.compile(r'remote|work from home|\bwfh\b|anywhere|worldwide|home[- ]based|virtual', re.I)
 _BLR_TXT = re.compile(r'bengaluru|bangalore', re.I)
+# Goal: move to South India. South cities and remote first; a job tied to another
+# city only when the fit is strong (NON_SOUTH_MIN_SCORE). Plain "India" counts as open.
+_SOUTH_TXT = re.compile(r'bengaluru|bangalore|hyderabad|secunderabad|chennai|kochi|cochin|ernakulam|'
+                        r'thiruvananthapuram|trivandrum|kozhikode|thrissur|coimbatore|madurai|tiruchirappalli|'
+                        r'mysuru|mysore|mangaluru|mangalore|hubli|hubballi|dharwad|belagavi|visakhapatnam|'
+                        r'vijayawada|guntur|tirupati|puducherry|pondicherry|karnataka|kerala|tamil nadu|'
+                        r'telangana|andhra', re.I)
+_NONSOUTH_TXT = re.compile(r'delhi|ncr|gurgaon|gurugram|noida|faridabad|ghaziabad|mumbai|navi mumbai|thane|'
+                           r'pune|kolkata|ahmedabad|gandhinagar|jaipur|lucknow|chandigarh|mohali|indore|bhopal|'
+                           r'patna|ranchi|bhubaneswar|guwahati|dehradun|nagpur|surat|vadodara|raipur|'
+                           r'maharashtra|gujarat|rajasthan|uttar pradesh|bihar|haryana|punjab|odisha|'
+                           r'west bengal|madhya pradesh|assam', re.I)
+NON_SOUTH_MIN_SCORE = 7
+
+
+def south_ok(job):
+    """South India, remote, or unspecified city: normal bar. Other cities: fit 7+ only."""
+    where = f"{job.get('location', '')} {job.get('title', '')}"
+    if _SOUTH_TXT.search(where) or _REMOTE_TXT.search(where) or not _NONSOUTH_TXT.search(where):
+        return True
+    return (job.get("ai_score") or 0) >= NON_SOUTH_MIN_SCORE
 
 
 def _norm(s):
@@ -294,7 +315,8 @@ def write_todo(entries):
             uniq.append(e)
     todo = uniq
     where = lambda e: f"{e.get('location','')} {e.get('title','')} {e.get('url','')}"
-    rank = lambda e: (0 if _BLR_TXT.search(where(e)) else 1 if _REMOTE_TXT.search(where(e)) else 2,
+    rank = lambda e: (0 if _BLR_TXT.search(where(e)) else 1 if _SOUTH_TXT.search(where(e))
+                      else 2 if _REMOTE_TXT.search(where(e)) else 3,
                       -(e.get("ai_score") or 0))
     todo.sort(key=lambda e: e.get("date", ""), reverse=True)          # newest first within a tier
     todo.sort(key=rank)
@@ -302,7 +324,7 @@ def write_todo(entries):
     lines = ["# Cowork to-do", "",
              f"_Built {datetime.now().strftime('%d %b %Y, %H:%M')} (UTC) by the job bot from APPLICATIONS.md "
              "minus every job already in APPLIED_BY_COWORK.md._", "",
-             f"**{len(todo)} jobs to apply to**, Bengaluru first, then remote, then by fit. "
+             f"**{len(todo)} jobs to apply to**, Bengaluru first, then other South India cities, then remote, then by fit. "
              "Put the ID at the start of the Notes column when you log each one.", "",
              "_Don't want one? Add its ID to REJECT.md and Cowork will skip it._", "",
              "| ID | Fit | Role | Organisation | Location | CV | Link |", "|---|---|---|---|---|---|---|"]
@@ -516,6 +538,10 @@ def _run(jobs, ai_call, fetch_page, fetch_bytes, notify, is_bangalore):
     can_send  = bool(GMAIL_APP_PASSWORD and APPLICANT_EMAIL) and os.path.exists(CV_FILE)
 
     todo = [j for j in jobs if eligible(j, is_bangalore) and _key(j) not in done_keys]
+    north = [j for j in todo if not south_ok(j)]
+    todo = [j for j in todo if south_ok(j)]
+    if north:
+        print(f"[auto-apply] {len(north)} job(s) outside South India with fit below {NON_SOUTH_MIN_SCORE}: not queued")
     # Why the rest were skipped — shown in the run log
     why = {"not in India/remote": 0, f"fit below {MIN_AI_SCORE}": 0, "junior title": 0, "already applied": 0}
     for j in jobs:
