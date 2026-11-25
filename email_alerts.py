@@ -36,7 +36,7 @@ NOT_JOB_SUBJECT = re.compile(
 
 # Job links in alert / digest emails
 _JOB_LINK = re.compile(
-    r'href="?(https?://(?:www\.)?(?:naukri\.com/job-listings-[^"\s>]+|'
+    r'href="?(https?://(?:www\.)?(?:naukri\.com/(?:jd/)?job-listings-[^"\s>]+|'
     r'iimjobs\.com/j/[^"\s>]+|hirist\.(?:com|tech)/j/[^"\s>]+))"?[^>]*>(.*?)</a>',
     re.IGNORECASE | re.DOTALL)
 _APPLY_LINK = re.compile(
@@ -150,7 +150,7 @@ def parse_alert_mail(raw_html, source):
     return jobs
 
 
-_NK_LISTING = re.compile(r'naukri\.com/job-listings-[A-Za-z0-9\-]+', re.IGNORECASE)
+_NK_LISTING = re.compile(r'naukri\.com/(?:jd/)?job-listings-[A-Za-z0-9\-]+', re.IGNORECASE)
 MAX_NAUKRI_REDIRECTS = 40    # tracking links resolved per run (one redirect lookup each)
 
 
@@ -175,7 +175,7 @@ def parse_naukri_wrapped(raw_html, budget=MAX_NAUKRI_REDIRECTS):
             time.sleep(0.3)
         if not m:
             continue
-        url = "https://www." + m.group(0)
+        url = "https://www." + m.group(0).replace("/jd/", "/")
         if url in seen:
             continue
         seen.add(url)
